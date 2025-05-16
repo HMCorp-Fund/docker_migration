@@ -1,51 +1,70 @@
 import os
 import yaml # type: ignore
 
-def parse_docker_compose(compose_file='docker-compose.yml'):
-    if not os.path.exists(compose_file):
-        raise FileNotFoundError(f"{compose_file} not found.")
+def parse_compose_file(compose_file_path):
+    """
+    Parse a Docker Compose file to identify resources
     
-    with open(compose_file, 'r') as file:
-        compose_data = yaml.safe_load(file)
-
-    services = compose_data.get('services', {})
-    images = set()
-    containers = set()
-    networks = set()
-    volumes = set()
-
-    for service_name, service in services.items():
-        if 'image' in service:
-            images.add(service['image'])
-        if 'networks' in service:
-            networks.update(service['networks'].keys())
-        if 'volumes' in service:
-            volumes.update(service['volumes'])
-
-        containers.add(service_name)
-
-    return {
-        'images': list(images),
-        'containers': list(containers),
-        'networks': list(networks),
-        'volumes': list(volumes),
-        'additional_files': get_additional_files(compose_data)
-    }
-
-def get_additional_files(compose_data):
-    additional_files = []
-    for service in compose_data.get('services', {}).values():
-        if 'volumes' in service:
-            for volume in service['volumes']:
-                if isinstance(volume, str):
-                    additional_files.append(volume.split(':')[0])  # Get host path
-                elif isinstance(volume, dict) and 'source' in volume:
-                    additional_files.append(volume['source'])
-    return list(set(additional_files))  # Remove duplicates
+    Args:
+        compose_file_path (str): Path to the docker-compose.yml file
+        
+    Returns:
+        tuple: (images, containers, networks, additional_files)
+    """
+    print(f"Parsing Docker Compose file: {compose_file_path}")
+    
+    try:
+        with open(compose_file_path, 'r') as f:
+            compose_data = yaml.safe_load(f)
+        
+        images = []
+        containers = []
+        networks = []
+        additional_files = []
+        
+        # Process services
+        if 'services' in compose_data:
+            for service_name, service_config in compose_data['services'].items():
+                # Get image
+                if 'image' in service_config:
+                    images.append(service_config['image'])
+                
+                # Get container name if specified
+                if 'container_name' in service_config:
+                    containers.append(service_config['container_name'])
+                else:
+                    # If container name not specified, Docker Compose generates one
+                    containers.append(f"{os.path.basename(os.getcwd())}_{service_name}")
+                
+                # Check for volumes that might point to external files
+                if 'volumes' in service_config:
+                    for volume in service_config['volumes']:
+                        if ':' in volume:
+                            host_path = volume.split(':')[0]
+                            if os.path.exists(host_path) and os.path.isfile(host_path):
+                                additional_files.append(host_path)
+        
+        # Process networks
+        if 'networks' in compose_data:
+            for network_name in compose_data['networks']:
+                networks.append(network_name)
+        
+        print(f"Found {len(images)} images, {len(containers)} containers, {len(networks)} networks, and {len(additional_files)} additional files")
+        return images, containers, networks, additional_files
+        
+    except Exception as e:
+        print(f"Error parsing Docker Compose file: {e}")
+        return [], [], [], []
 
 def main():
-    docker_data = parse_docker_compose()
-    print(docker_data)
+    compose_file_path = 'docker-compose.yml'
+    images, containers, networks, additional_files = parse_compose_file(compose_file_path)
+    print({
+        'images': images,
+        'containers': containers,
+        'networks': networks,
+        'additional_files': additional_files
+    })
 
 if __name__ == "__main__":
     main()

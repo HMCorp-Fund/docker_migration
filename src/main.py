@@ -2,11 +2,11 @@ import os
 import zipfile
 import tarfile
 import shutil
-from src.docker_utils.compose_parser import parse_compose_file
-from src.docker_utils.docker_backup import backup_docker_data, backup_all_docker_data
-from src.archive.archiver import create_archives
-from src.transfer.file_transfer import transfer_files
-from src.validation.health_check import check_docker_services
+from docker_utils.compose_parser import parse_compose_file
+from docker_utils.docker_backup import backup_docker_data, backup_all_docker_data
+from archive.archiver import create_archives
+from transfer.file_transfer import transfer_files
+from validation.health_check import check_docker_services
 
 def main():
     # Check if docker-compose.yml exists
