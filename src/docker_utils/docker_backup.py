@@ -10,12 +10,14 @@ import datetime
 def run_command(cmd, capture_output=True, use_sudo=True):
     """Run a shell command and return the output"""
     try:
-        # Add sudo if required and if command starts with docker
-        if use_sudo and cmd.strip().startswith('docker'):
-            cmd = f"sudo {cmd}"
+        # Add sudo if required for any command when use_sudo is True
+        if use_sudo:
+            # Don't add sudo if it's already there
+            if not cmd.strip().startswith("sudo "):
+                cmd = f"sudo {cmd}"
             
         result = subprocess.run(cmd, shell=True, check=True, 
-                               text=True, capture_output=capture_output)
+                              text=True, capture_output=capture_output)
         return result.stdout.strip() if capture_output else True
     except subprocess.CalledProcessError as e:
         print(f"Error running command: {cmd}")
