@@ -1,0 +1,6 @@
+docker
+docker-compose
+requests
+paramiko
+pyyaml
+zipfile36
