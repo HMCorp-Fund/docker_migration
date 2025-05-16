@@ -57,8 +57,8 @@ def backup_docker_data(images, containers, networks):
         print(f"Saving image: {image_name}")
         image_filename = os.path.join(backup_dir, 'images', image_name.replace('/', '_').replace(':', '_') + '.tar')
         run_command(f"docker save -o '{image_filename}' '{image_name}'", capture_output=False)
-        # Fix permissions on the saved image file
-        run_command(f"chmod 644 '{image_filename}'", capture_output=False)
+        # Fix permissions on the saved image file - make sure we use sudo too
+        run_command(f"chmod 644 '{image_filename}'", capture_output=False, use_sudo=True)
     
     # Save networks
     os.makedirs(os.path.join(backup_dir, 'networks'), exist_ok=True)
@@ -79,8 +79,8 @@ def backup_docker_data(images, containers, networks):
             'docker_version': run_command("docker version --format '{{.Server.Version}}'")
         }, f, indent=2)
     
-    # Fix permissions on the entire backup directory
-    run_command(f"chmod -R a+r '{backup_dir}'", capture_output=False)
+    # Fix permissions on the entire backup directory - make sure we use sudo
+    run_command(f"chmod -R a+r '{backup_dir}'", capture_output=False, use_sudo=True)
     
     return backup_dir
 
