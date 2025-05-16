@@ -1,17 +1,29 @@
 import os
-import docker # type: ignore
 import json
 import tempfile
 import tarfile
 import shutil
 import subprocess
-import io
 import datetime
+
+
+def run_command(cmd, capture_output=True):
+    """Run a shell command and return the output"""
+    try:
+        result = subprocess.run(cmd, shell=True, check=True, 
+                               text=True, capture_output=capture_output)
+        return result.stdout.strip() if capture_output else True
+    except subprocess.CalledProcessError as e:
+        print(f"Error running command: {cmd}")
+        print(f"Error: {e}")
+        if capture_output:
+            print(f"STDERR: {e.stderr}")
+        return None
 
 
 def backup_docker_data(images, containers, networks):
     """
-    Backup specified Docker data
+    Backup specified Docker data using Docker CLI
     
     Args:
         images (list): List of image names to backup
@@ -21,56 +33,35 @@ def backup_docker_data(images, containers, networks):
     Returns:
         str: Path to the Docker backup directory
     """
-    client = docker.from_env()
-    
     # Create a backup directory
     backup_dir = tempfile.mkdtemp(prefix="docker_backup_")
+    print(f"Creating Docker backup in {backup_dir}")
     
     # Save container details
+    containers_json = []
+    for container_id in containers:
+        container_info = run_command(f"docker inspect {container_id}")
+        if container_info:
+            containers_json.append(json.loads(container_info)[0])
+    
     with open(os.path.join(backup_dir, 'containers.json'), 'w') as f:
-        container_data = []
-        for container_id in containers:
-            try:
-                container = client.containers.get(container_id)
-                container_data.append({
-                    'id': container.id,
-                    'name': container.name,
-                    'image': container.image.tags[0] if container.image.tags else container.image.id,
-                    'command': container.attrs['Config']['Cmd'],
-                    'ports': container.attrs['HostConfig']['PortBindings'] if 'PortBindings' in container.attrs['HostConfig'] else {},
-                    'volumes': container.attrs['HostConfig']['Binds'] if 'Binds' in container.attrs['HostConfig'] else [],
-                    'environment': container.attrs['Config']['Env'] if 'Env' in container.attrs['Config'] else [],
-                    'labels': container.attrs['Config']['Labels'] if 'Labels' in container.attrs['Config'] else {},
-                    'restart_policy': container.attrs['HostConfig']['RestartPolicy'] if 'RestartPolicy' in container.attrs['HostConfig'] else {},
-                })
-            except docker.errors.NotFound:
-                print(f"Warning: Container {container_id} not found, skipping")
-                
-        json.dump(container_data, f, indent=2)
+        json.dump(containers_json, f, indent=2)
     
     # Save images
     os.makedirs(os.path.join(backup_dir, 'images'), exist_ok=True)
     for image_name in images:
-        try:
-            print(f"Saving image: {image_name}")
-            image_filename = os.path.join(backup_dir, 'images', image_name.replace('/', '_').replace(':', '_') + '.tar')
-            
-            # Use docker CLI for more reliable image saving
-            subprocess.run(['docker', 'save', '-o', image_filename, image_name], check=True)
-            
-        except (docker.errors.ImageNotFound, subprocess.SubprocessError) as e:
-            print(f"Error saving image {image_name}: {e}")
+        print(f"Saving image: {image_name}")
+        image_filename = os.path.join(backup_dir, 'images', image_name.replace('/', '_').replace(':', '_') + '.tar')
+        run_command(f"docker save -o '{image_filename}' '{image_name}'", capture_output=False)
     
     # Save networks
     os.makedirs(os.path.join(backup_dir, 'networks'), exist_ok=True)
     for network_name in networks:
-        try:
-            network = client.networks.get(network_name)
+        network_info = run_command(f"docker network inspect {network_name}")
+        if network_info:
             network_filename = os.path.join(backup_dir, 'networks', network_name + '.json')
             with open(network_filename, 'w') as f:
-                json.dump(network.attrs, f, indent=2)
-        except docker.errors.NotFound:
-            print(f"Warning: Network {network_name} not found, skipping")
+                f.write(network_info)
     
     # Create a manifest file with metadata
     with open(os.path.join(backup_dir, 'manifest.json'), 'w') as f:
@@ -79,7 +70,7 @@ def backup_docker_data(images, containers, networks):
             'containers': containers,
             'networks': networks,
             'date': str(datetime.datetime.now()),
-            'docker_version': client.version()
+            'docker_version': run_command("docker version --format '{{.Server.Version}}'")
         }, f, indent=2)
     
     return backup_dir
@@ -87,7 +78,7 @@ def backup_docker_data(images, containers, networks):
 
 def backup_all_docker_data():
     """
-    Backup all running Docker entities (containers, images, networks)
+    Backup all Docker data using CLI commands
     
     Returns:
         str: Path to the Docker backup directory
@@ -95,35 +86,26 @@ def backup_all_docker_data():
         list: List of container IDs
         list: List of network IDs
     """
-    client = docker.from_env()
-    
-    # Get all running containers
-    containers = client.containers.list(all=True)
-    container_ids = [container.id for container in containers]
+    # Get all containers
+    containers_raw = run_command("docker ps -a --format '{{.ID}}'")
+    containers = containers_raw.splitlines() if containers_raw else []
     
     # Get all images used by those containers
     images = []
     for container in containers:
-        image = container.image
-        if image.tags:
-            images.append(image.tags[0])
-        else:
-            images.append(image.id)
+        image = run_command(f"docker inspect --format='{{{{.Config.Image}}}}' {container}")
+        if image:
+            images.append(image)
     
-    # Get all networks used by those containers
-    networks = []
-    for container in containers:
-        container_networks = container.attrs['NetworkSettings']['Networks'].keys()
-        networks.extend(container_networks)
+    # Get all networks used
+    networks_raw = run_command("docker network ls --format '{{.Name}}'")
+    networks = networks_raw.splitlines() if networks_raw else []
+    networks = [n for n in networks if n not in ('bridge', 'host', 'none')]
     
-    # Remove duplicates
-    images = list(set(images))
-    networks = list(set(networks))
+    # Create backup
+    backup_dir = backup_docker_data(images, containers, networks)
     
-    # Create backup with the collected resources
-    backup_dir = backup_docker_data(images, container_ids, networks)
-    
-    return backup_dir, images, container_ids, networks
+    return backup_dir, images, containers, networks
 
 
 def create_docker_backup(backup_dir, include_current_dir=False):
@@ -137,7 +119,7 @@ def create_docker_backup(backup_dir, include_current_dir=False):
     Returns:
         str: Path to the created backup file
     """
-    client = docker.from_env()
+    client = docker.from_env() # type: ignore
 
     # Create a directory for the backup if it doesn't exist
     os.makedirs(backup_dir, exist_ok=True)
