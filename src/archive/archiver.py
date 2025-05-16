@@ -21,21 +21,23 @@ def create_archives(docker_backup_path, current_dir_path=None, additional_files=
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     archive_dir = tempfile.mkdtemp(prefix="docker_migration_")
     
-    # Create Docker backup archive
-    docker_archive = os.path.join(archive_dir, f'docker_backup_{timestamp}.tar.gz')
+    # Create Docker backup archive - USE NO COMPRESSION FOR SPEED
+    docker_archive = os.path.join(archive_dir, f'docker_backup_{timestamp}.tar')
     print(f"Creating Docker backup archive: {docker_archive}")
+    print(f"Using no compression for speed. This may still take a few minutes for large images...")
     
-    with tarfile.open(docker_archive, 'w:gz') as tar:
+    # Use 'w:' instead of 'w:gz' for no compression (much faster)
+    with tarfile.open(docker_archive, 'w:') as tar:
         tar.add(docker_backup_path, arcname=os.path.basename(docker_backup_path))
     
     files_to_archive = [docker_archive]
     
     # Create current directory archive if specified
     if current_dir_path:
-        current_dir_archive = os.path.join(archive_dir, f'current_dir_{timestamp}.tar.gz')
+        current_dir_archive = os.path.join(archive_dir, f'current_dir_{timestamp}.tar')
         print(f"Creating current directory archive: {current_dir_archive}")
         
-        with tarfile.open(current_dir_archive, 'w:gz') as tar:
+        with tarfile.open(current_dir_archive, 'w:') as tar:
             for item in os.listdir(current_dir_path):
                 item_path = os.path.join(current_dir_path, item)
                 # Skip the archive directory and Docker backup directory
@@ -46,21 +48,21 @@ def create_archives(docker_backup_path, current_dir_path=None, additional_files=
     
     # Add additional files if specified
     if additional_files and len(additional_files) > 0:
-        additional_files_archive = os.path.join(archive_dir, f'additional_files_{timestamp}.tar.gz')
+        additional_files_archive = os.path.join(archive_dir, f'additional_files_{timestamp}.tar')
         print(f"Creating additional files archive: {additional_files_archive}")
         
-        with tarfile.open(additional_files_archive, 'w:gz') as tar:
+        with tarfile.open(additional_files_archive, 'w:') as tar:
             for file_path in additional_files:
                 if os.path.exists(file_path):
                     tar.add(file_path, arcname=os.path.basename(file_path))
         
         files_to_archive.append(additional_files_archive)
     
-    # Create main archive containing all archives
-    main_archive = os.path.join(os.getcwd(), f'docker_migration_{timestamp}.tar.gz')
+    # Create main archive containing all archives - LIGHT COMPRESSION
+    main_archive = os.path.join(os.getcwd(), f'docker_migration_{timestamp}.tar')
     print(f"Creating main archive: {main_archive}")
     
-    with tarfile.open(main_archive, 'w:gz') as tar:
+    with tarfile.open(main_archive, 'w:') as tar:
         for file_path in files_to_archive:
             tar.add(file_path, arcname=os.path.basename(file_path))
         
