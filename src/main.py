@@ -52,6 +52,14 @@ def main():
         if os.path.exists(compose_file) and not args.backup_all:
             print(f"Found {compose_file}. Backing up resources defined in the compose file...")
             images, containers, networks, volumes, additional_files = parse_compose_file(compose_file)
+            
+            # Debug output
+            print("Resources detected in docker-compose.yml:")
+            print(f"- Images: {', '.join(images)}")
+            print(f"- Containers: {', '.join(containers)}")
+            print(f"- Networks: {', '.join(networks)}")
+            print(f"- Volumes: {', '.join(volumes)}")
+            
             docker_backup_path = backup_docker_data(images, containers, networks, volumes)
             include_current_dir = True
         else:
