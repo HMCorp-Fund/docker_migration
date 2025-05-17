@@ -151,10 +151,15 @@ def main():
         else:
             # Normal restoration process
             restored_images, restored_networks, restored_containers = restore_docker_backup(args.backup_file)
-        
-        # Check if Docker services are running properly after restoration
-        print("Checking if Docker services are running properly after restoration...")
-        check_docker_services()
+            
+            # Wait a moment for services to start
+            print("Waiting for services to start...")
+            import time
+            time.sleep(5)
+            
+            # Check if Docker services are running properly after restoration
+            print("Checking if Docker services are running properly after restoration...")
+            check_docker_services()
 
 if __name__ == "__main__":
     main()

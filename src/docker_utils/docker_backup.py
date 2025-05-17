@@ -313,70 +313,7 @@ def extract_backup(backup_file, extract_dir=None):
     else:
         raise ValueError(f"File {backup_file} is not a valid tar archive")
     
-    # Extract Docker backup archive (for images, networks, containers)
-    docker_backup_tar = None
-    docker_backup_dir = None
-    
-    # Extract current directory archive (for application files)
-    current_dir_tar = None
-    
-    # Extract additional files archive
-    additional_files_tar = None
-    
-    # Find all inner archives
-    for file in os.listdir(extract_dir):
-        if file.startswith('docker_backup_') and file.endswith('.tar'):
-            docker_backup_tar = os.path.join(extract_dir, file)
-        elif file.startswith('current_dir_') and file.endswith('.tar'):
-            current_dir_tar = os.path.join(extract_dir, file)
-        elif file.startswith('additional_files_') and file.endswith('.tar'):
-            additional_files_tar = os.path.join(extract_dir, file)
-    
-    # Process Docker backup archive
-    if docker_backup_tar:
-        print(f"Found inner Docker backup archive: {docker_backup_tar}")
-        docker_extract_dir = os.path.join(extract_dir, "docker_data")
-        os.makedirs(docker_extract_dir, exist_ok=True)
-        
-        with tarfile.open(docker_backup_tar, 'r:*') as tar:
-            tar.extractall(path=docker_extract_dir)
-            
-        # Find the docker_backup_ directory inside the extracted content
-        for item in os.listdir(docker_extract_dir):
-            item_path = os.path.join(docker_extract_dir, item)
-            if os.path.isdir(item_path) and item.startswith('docker_backup_'):
-                docker_backup_dir = item_path
-                break
-        
-        if not docker_backup_dir:
-            docker_backup_dir = docker_extract_dir
-    else:
-        print(f"Warning: Could not find docker_backup_*.tar file in the archive")
-    
-    # Extract current directory files to the current working directory
-    if current_dir_tar:
-        print(f"Extracting application files from: {current_dir_tar}")
-        current_dir = os.getcwd()
-        
-        with tarfile.open(current_dir_tar, 'r:*') as tar:
-            tar.extractall(path=current_dir)
-        
-        print(f"Application files extracted to current directory: {current_dir}")
-    else:
-        print("No application files (current_dir archive) found in the backup")
-    
-    # Extract additional files
-    if additional_files_tar:
-        print(f"Extracting additional files from: {additional_files_tar}")
-        additional_files_dir = os.path.join(extract_dir, "additional_files")
-        os.makedirs(additional_files_dir, exist_ok=True)
-        
-        with tarfile.open(additional_files_tar, 'r:*') as tar:
-            tar.extractall(path=additional_files_dir)
-            
-        print(f"Additional files extracted to: {additional_files_dir}")
-    
-    return docker_backup_dir if docker_backup_dir else extract_dir
+    return extract_dir
 
 
 def restore_images(backup_dir):
@@ -549,10 +486,9 @@ def restore_networks(backup_dir):
     return restored_networks
 
 
-def restore_application_files(backup_file):
-    """Extract application files from backup to current directory"""
+def restore_application_files(backup_file, target_dir):
+    """Extract application files from backup to target directory"""
     temp_dir = tempfile.mkdtemp(prefix="docker_extract_")
-    current_dir = os.getcwd()
     
     try:
         # Extract main archive
@@ -568,17 +504,9 @@ def restore_application_files(backup_file):
         
         if current_dir_tar:
             print(f"Found application files archive: {current_dir_tar}")
-            print(f"Extracting application files to current directory: {current_dir}")
+            print(f"Extracting application files to: {target_dir}")
             with tarfile.open(current_dir_tar, 'r:*') as tar:
-                # Extract with caution - don't overwrite existing files
-                for member in tar.getmembers():
-                    target_path = os.path.join(current_dir, member.name)
-                    if os.path.exists(target_path):
-                        print(f"File already exists, skipping: {member.name}")
-                    else:
-                        tar.extract(member, path=current_dir)
-                        print(f"Extracted: {member.name}")
-            
+                tar.extractall(path=target_dir)
             print("Application files successfully extracted")
         else:
             print("No application files archive found in backup")
@@ -688,7 +616,7 @@ def restore_containers(backup_dir, networks, volumes):
 
 def restore_docker_backup(backup_file, extract_dir=None):
     """
-    Restore a Docker backup
+    Restore a Docker backup with proper Docker Compose integration
     
     Args:
         backup_file (str): Path to the backup file
@@ -702,25 +630,156 @@ def restore_docker_backup(backup_file, extract_dir=None):
     # Extract the backup
     backup_dir = extract_backup(backup_file, extract_dir)
     
-    # Restore Docker images
+    # First, extract application files (docker-compose.yml and related files)
+    current_dir = os.getcwd()
+    app_files_extracted = extract_application_files(backup_file, current_dir)
+    
+    # Restore images only - they don't have Compose-specific labels
     restored_images = restore_images(backup_dir)
     
-    # Restore Docker volumes
-    restored_volumes = restore_volumes(backup_dir)
+    # Check if docker-compose.yml exists in current directory
+    compose_file = os.path.join(current_dir, 'docker-compose.yml')
+    compose_yaml_file = os.path.join(current_dir, 'docker-compose.yaml')
     
-    # Restore Docker networks
-    restored_networks = restore_networks(backup_dir)
-    
-    # Restore Docker containers
-    restored_containers = restore_containers(backup_dir, restored_networks, restored_volumes)
-    
-    # Extract application files (docker-compose.yml and related files)
-    restore_application_files(backup_file)
+    if os.path.exists(compose_file) or os.path.exists(compose_yaml_file):
+        # Extract volume data to a temporary location
+        volumes_dir = os.path.join(backup_dir, 'volumes')
+        temp_volumes_data = None
+        
+        if os.path.exists(volumes_dir):
+            # Save volume data for later restoration
+            temp_volumes_data = os.path.join(tempfile.mkdtemp(), 'volume_data')
+            shutil.copytree(volumes_dir, temp_volumes_data)
+        
+        # Check for existing resources that might conflict with Docker Compose
+        print("Checking for existing Docker resources that might conflict with Docker Compose...")
+        
+        # Get networks from docker-compose.yml to check for conflicts
+        networks_to_check = []
+        try:
+            import yaml # type: ignore
+            if os.path.exists(compose_file):
+                with open(compose_file, 'r') as f:
+                    compose_data = yaml.safe_load(f)
+            else:
+                with open(compose_yaml_file, 'r') as f:
+                    compose_data = yaml.safe_load(f)
+            
+            # Extract network names
+            if compose_data and 'networks' in compose_data:
+                networks_to_check = list(compose_data['networks'].keys())
+                
+                # For each network, check if it exists and add external: true if needed
+                for network in networks_to_check:
+                    # Check if network exists
+                    check_result = run_command(f"docker network ls --format '{{{{.Name}}}}' --filter name={network}")
+                    if check_result and network in check_result.splitlines():
+                        print(f"Network {network} already exists, marking as external in docker-compose.yml")
+                        # Add external: true to the network in docker-compose.yml
+                        compose_data['networks'][network]['external'] = True
+                
+                # Write the updated docker-compose.yml
+                if os.path.exists(compose_file):
+                    with open(compose_file, 'w') as f:
+                        yaml.dump(compose_data, f)
+                else:
+                    with open(compose_yaml_file, 'w') as f:
+                        yaml.dump(compose_data, f)
+                
+        except Exception as e:
+            print(f"Warning: Error parsing docker-compose.yml: {e}")
+        
+        print("\nStarting containers using Docker Compose...")
+        # Use Docker Compose to create networks and containers with proper labels
+        result = run_command("docker compose up -d", capture_output=False)
+        
+        if result:
+            print("Docker Compose successfully started containers with proper labels")
+            # Get the list of containers created by Docker Compose
+            containers_str = run_command("docker compose ps -q")
+            restored_containers = containers_str.split() if containers_str else []
+            
+            # Get the list of networks created by Docker Compose
+            networks_str = run_command("docker network ls --filter 'label=com.docker.compose.project' --format '{{.Name}}'")
+            restored_networks = networks_str.split() if networks_str else []
+            
+            # Restore volume data if available
+            if temp_volumes_data:
+                print("\nRestoring volume data...")
+                for volume_dir in os.listdir(temp_volumes_data):
+                    if os.path.isdir(os.path.join(temp_volumes_data, volume_dir)):
+                        volume_data_path = os.path.join(temp_volumes_data, volume_dir)
+                        # Use docker run to copy data into the volume
+                        print(f"Restoring data for volume: {volume_dir}")
+                        
+                        # Create a temporary container to copy data
+                        temp_container = f"vol_restore_{volume_dir}"
+                        run_command(f"docker run --rm -d --name {temp_container} -v {volume_dir}:/target alpine sleep 60")
+                        
+                        # Copy data into the volume
+                        run_command(f"docker cp {volume_data_path}/. {temp_container}:/target/", capture_output=False)
+                        
+                        # Stop and remove the temp container
+                        run_command(f"docker stop {temp_container}")
+                
+                # Clean up temporary directory
+                shutil.rmtree(os.path.dirname(temp_volumes_data))
+        else:
+            print("Warning: Docker Compose failed to start containers. Falling back to direct restoration.")
+            # Fall back to direct network/container restoration without labels
+            restored_networks = restore_networks(backup_dir)
+            restored_containers = restore_containers(backup_dir, restored_networks, [])
+    else:
+        print("\nWarning: No docker-compose.yml found after extraction.")
+        print("Falling back to direct restoration, but Docker Compose commands won't work properly.")
+        
+        # Fall back to direct network/container restoration without labels
+        restored_networks = restore_networks(backup_dir)
+        restored_volumes = restore_volumes(backup_dir)
+        restored_containers = restore_containers(backup_dir, restored_networks, restored_volumes)
     
     print(f"\nDocker restoration complete!")
-    print(f"Restored {len(restored_images)} images, {len(restored_networks)} networks, {len(restored_volumes)} volumes, and {len(restored_containers)} containers")
+    print(f"Restored {len(restored_images)} images, {len(restored_networks)} networks, and {len(restored_containers)} containers")
     
     return (restored_images, restored_networks, restored_containers)
+
+
+def extract_application_files(backup_file, target_dir):
+    """Extract application files from backup to target directory
+    
+    Returns:
+        bool: True if files were extracted successfully
+    """
+    temp_dir = tempfile.mkdtemp(prefix="docker_extract_")
+    success = False
+    
+    try:
+        # Extract main archive
+        with tarfile.open(backup_file, 'r:*') as tar:
+            tar.extractall(path=temp_dir)
+        
+        # Find and extract current_dir archive
+        current_dir_tar = None
+        for file in os.listdir(temp_dir):
+            if file.startswith('current_dir_') and file.endswith('.tar'):
+                current_dir_tar = os.path.join(temp_dir, file)
+                break
+        
+        if current_dir_tar:
+            print(f"Found application files archive: {current_dir_tar}")
+            print(f"Extracting application files to: {target_dir}")
+            with tarfile.open(current_dir_tar, 'r:*') as tar:
+                tar.extractall(path=target_dir)
+            print("Application files successfully extracted")
+            success = True
+        else:
+            print("No application files archive found in backup")
+            success = False
+    finally:
+        # Clean up temp directory
+        shutil.rmtree(temp_dir)
+    
+    return success
 
 
 def main():
