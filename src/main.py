@@ -51,8 +51,8 @@ def main():
     if args.mode == 'backup':
         if os.path.exists(compose_file) and not args.backup_all:
             print(f"Found {compose_file}. Backing up resources defined in the compose file...")
-            images, containers, networks, additional_files = parse_compose_file(compose_file)
-            docker_backup_path = backup_docker_data(images, containers, networks)
+            images, containers, networks, volumes, additional_files = parse_compose_file(compose_file)
+            docker_backup_path = backup_docker_data(images, containers, networks, volumes)
             include_current_dir = True
         else:
             if args.backup_all:

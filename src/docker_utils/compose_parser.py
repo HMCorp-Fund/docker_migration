@@ -1,68 +1,88 @@
 import os
 import yaml # type: ignore
 
-def parse_compose_file(compose_file_path):
+def parse_compose_file(compose_file):
     """
-    Parse a Docker Compose file to identify resources
+    Parse a docker-compose.yml file and extract images, containers, networks, and volumes
     
     Args:
-        compose_file_path (str): Path to the docker-compose.yml file
+        compose_file (str): Path to docker-compose.yml file
         
     Returns:
-        tuple: (images, containers, networks, additional_files)
+        tuple: (images, containers, networks, volumes, additional_files)
     """
-    print(f"Parsing Docker Compose file: {compose_file_path}")
-    
     try:
-        with open(compose_file_path, 'r') as f:
+        import yaml # type: ignore
+        with open(compose_file, 'r') as f:
             compose_data = yaml.safe_load(f)
         
+        # Extract images
         images = []
         containers = []
-        networks = []
         additional_files = []
         
-        # Process services
         if 'services' in compose_data:
-            for service_name, service_config in compose_data['services'].items():
-                # Get image
-                if 'image' in service_config:
-                    images.append(service_config['image'])
-                
-                # Get container name if specified
-                if 'container_name' in service_config:
-                    containers.append(service_config['container_name'])
-                else:
-                    # If container name not specified, Docker Compose generates one
-                    containers.append(f"{os.path.basename(os.getcwd())}_{service_name}")
-                
-                # Check for volumes that might point to external files
-                if 'volumes' in service_config:
-                    for volume in service_config['volumes']:
-                        if ':' in volume:
-                            host_path = volume.split(':')[0]
-                            if os.path.exists(host_path) and os.path.isfile(host_path):
-                                additional_files.append(host_path)
+            for service_name, service in compose_data['services'].items():
+                if 'image' in service:
+                    images.append(service['image'])
+                    
+                # Add container name if specified
+                container_name = service.get('container_name', f"{os.path.basename(os.path.dirname(compose_file))}-{service_name}")
+                containers.append(container_name)
         
-        # Process networks
+        # Extract networks
+        networks = []
         if 'networks' in compose_data:
-            for network_name in compose_data['networks']:
-                networks.append(network_name)
+            networks = list(compose_data['networks'].keys())
+            
+            # For external networks, try to get the actual name
+            for network_name, network in compose_data['networks'].items():
+                if 'external' in network:
+                    if isinstance(network['external'], dict) and 'name' in network['external']:
+                        networks.append(network['external']['name'])
+                    elif network['external'] == True and 'name' in network:
+                        networks.append(network['name'])
         
-        print(f"Found {len(images)} images, {len(containers)} containers, {len(networks)} networks, and {len(additional_files)} additional files")
-        return images, containers, networks, additional_files
+        # Extract volumes
+        volumes = []
+        if 'volumes' in compose_data:
+            volumes = list(compose_data['volumes'].keys())
+            
+            # For external volumes, try to get the actual name
+            for volume_name, volume in compose_data['volumes'].items():
+                if isinstance(volume, dict) and 'external' in volume:
+                    if isinstance(volume['external'], dict) and 'name' in volume['external']:
+                        volumes.append(volume['external']['name'])
+                    elif volume['external'] == True and 'name' in volume:
+                        volumes.append(volume['name'])
+        
+        # Add environment files to additional files list
+        if 'services' in compose_data:
+            for service_name, service in compose_data['services'].items():
+                if 'env_file' in service:
+                    if isinstance(service['env_file'], list):
+                        for env_file in service['env_file']:
+                            additional_files.append(env_file)
+                    else:
+                        additional_files.append(service['env_file'])
+        
+        # Add the compose file itself to additional files
+        additional_files.append(compose_file)
+        
+        return images, containers, networks, volumes, additional_files
         
     except Exception as e:
-        print(f"Error parsing Docker Compose file: {e}")
-        return [], [], [], []
+        print(f"Error parsing docker-compose file: {e}")
+        return [], [], [], [], []
 
 def main():
     compose_file_path = 'docker-compose.yml'
-    images, containers, networks, additional_files = parse_compose_file(compose_file_path)
+    images, containers, networks, volumes, additional_files = parse_compose_file(compose_file_path)
     print({
         'images': images,
         'containers': containers,
         'networks': networks,
+        'volumes': volumes,
         'additional_files': additional_files
     })
 

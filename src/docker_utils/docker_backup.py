@@ -27,124 +27,109 @@ def run_command(cmd, capture_output=True, use_sudo=True):
         return None
 
 
-def backup_docker_data(images, containers, networks):
+def backup_docker_data(images=None, containers=None, networks=None, volumes=None):
     """
-    Backup specified Docker data using Docker CLI
+    Backup Docker data using CLI commands
     
     Args:
-        images (list): List of image names to backup
-        containers (list): List of container IDs to backup
-        networks (list): List of network IDs to backup
+        images (list, optional): List of image names to backup
+        containers (list, optional): List of container names to backup
+        networks (list, optional): List of network names to backup
+        volumes (list, optional): List of volume names to backup
         
     Returns:
         str: Path to the Docker backup directory
     """
-    # Create a backup directory
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_dir = tempfile.mkdtemp(prefix="docker_backup_")
-    print(f"Creating Docker backup in {backup_dir}")
     
-    # Save container details and identify volumes
-    containers_json = []
-    existing_containers = []
-    volumes_to_backup = set()  # Use a set to avoid duplicates
+    # Create directories for each backup type
+    images_dir = os.path.join(backup_dir, "images")
+    containers_dir = os.path.join(backup_dir, "containers")
+    networks_dir = os.path.join(backup_dir, "networks")
+    volumes_dir = os.path.join(backup_dir, "volumes")
     
-    # First check which containers actually exist and identify volumes
-    for container_id in containers:
-        container_info = run_command(f"docker inspect {container_id}")
-        if container_info:
+    os.makedirs(images_dir, exist_ok=True)
+    os.makedirs(containers_dir, exist_ok=True)
+    os.makedirs(networks_dir, exist_ok=True)
+    os.makedirs(volumes_dir, exist_ok=True)
+    
+    # Backup images
+    if images:
+        for image in images:
+            print(f"Saving image: {image}")
+            image_file = os.path.join(images_dir, image.replace('/', '_').replace(':', '_') + '.tar')
+            run_command(f"docker save {image} -o '{image_file}'")
+    
+    # Backup container configurations
+    if containers:
+        for container in containers:
             try:
-                container_data = json.loads(container_info)[0]
-                containers_json.append(container_data)
-                existing_containers.append(container_id)
-                
-                # Extract volume information
-                mounts = container_data.get('Mounts', [])
-                for mount in mounts:
-                    if mount.get('Type') == 'volume':
-                        volumes_to_backup.add(mount.get('Name'))
-                        
-            except json.JSONDecodeError:
-                print(f"Warning: Could not parse JSON for container {container_id}")
-        else:
-            print(f"Warning: Container {container_id} not found, it will be skipped")
-    
-    # Update the containers list to only include existing containers
-    containers = existing_containers
-    
-    with open(os.path.join(backup_dir, 'containers.json'), 'w') as f:
-        json.dump(containers_json, f, indent=2)
-    
-    # Save images
-    os.makedirs(os.path.join(backup_dir, 'images'), exist_ok=True)
-    for image_name in images:
-        print(f"Saving image: {image_name}")
-        image_filename = os.path.join(backup_dir, 'images', image_name.replace('/', '_').replace(':', '_') + '.tar')
-        run_command(f"docker save -o '{image_filename}' '{image_name}'", capture_output=False)
-        run_command(f"chmod 644 '{image_filename}'", capture_output=False)
-    
-    # Save networks
-    existing_networks = []
-    networks_json = []
-    
-    os.makedirs(os.path.join(backup_dir, 'networks'), exist_ok=True)
-    for network_name in networks:
-        network_info = run_command(f"docker network inspect {network_name}")
-        if network_info:
-            try:
-                network_data = json.loads(network_info)
-                networks_json.extend(network_data)
-                existing_networks.append(network_name)
-                
-                # Save the network configuration
-                network_filename = os.path.join(backup_dir, 'networks', network_name + '.json')
-                with open(network_filename, 'w') as f:
-                    f.write(network_info)
+                # Check if container exists before trying to inspect it
+                check_result = run_command(f"docker ps -a --format '{{{{.Names}}}}' --filter name=^{container}$")
+                if not check_result or container not in check_result:
+                    print(f"Container {container} not found, skipping backup")
+                    continue
                     
-                print(f"Saved network configuration for: {network_name}")
-            except json.JSONDecodeError:
-                print(f"Warning: Could not parse JSON for network {network_name}")
-        else:
-            print(f"Warning: Network {network_name} not found, it will be skipped")
-    
-    # Save volumes
-    os.makedirs(os.path.join(backup_dir, 'volumes'), exist_ok=True)
-    for volume_name in volumes_to_backup:
-        print(f"Backing up volume: {volume_name}")
-        
-        # Get volume info
-        volume_info = run_command(f"docker volume inspect {volume_name}")
-        if volume_info:
-            try:
-                # Save volume metadata
-                volume_data = json.loads(volume_info)
-                volume_meta_file = os.path.join(backup_dir, 'volumes', f"{volume_name}.json")
-                with open(volume_meta_file, 'w') as f:
-                    f.write(volume_info)
+                print(f"Backing up container configuration: {container}")
+                container_file = os.path.join(containers_dir, container + '.json')
+                config = run_command(f"docker inspect {container}")
                 
-                # Export volume data using a temporary container
-                volume_dir = os.path.join(backup_dir, 'volumes', volume_name)
+                if config:
+                    with open(container_file, 'w') as f:
+                        f.write(config)
+            except Exception as e:
+                print(f"Error backing up container {container}: {e}")
+    
+    # Backup networks
+    if networks:
+        for network in networks:
+            try:
+                # Check if network exists
+                check_result = run_command(f"docker network ls --format '{{{{.Name}}}}' --filter name=^{network}$")
+                if not check_result or network not in check_result:
+                    print(f"Network {network} not found, skipping backup")
+                    continue
+                    
+                print(f"Saved network configuration for: {network}")
+                network_file = os.path.join(networks_dir, network + '.json')
+                config = run_command(f"docker network inspect {network}")
+                
+                if config:
+                    with open(network_file, 'w') as f:
+                        f.write(config)
+            except Exception as e:
+                print(f"Error backing up network {network}: {e}")
+    
+    # Backup volumes
+    if volumes:
+        for volume in volumes:
+            try:
+                # Check if volume exists
+                check_result = run_command(f"docker volume ls --format '{{{{.Name}}}}' --filter name=^{volume}$")
+                if not check_result or volume not in check_result:
+                    print(f"Volume {volume} not found, skipping backup")
+                    continue
+                    
+                print(f"Backing up volume: {volume}")
+                volume_dir = os.path.join(volumes_dir, volume)
                 os.makedirs(volume_dir, exist_ok=True)
                 
-                # Use alpine to copy data from volume to our backup directory
-                temp_container = f"volume_backup_{volume_name.replace('-', '_')}"
-                run_command(f"docker run --rm --name {temp_container} -v {volume_name}:/source -v {volume_dir}:/backup:rw alpine sh -c 'cd /source && tar -cf - . | tar -xf - -C /backup'", capture_output=False)
+                # Use a temporary container to copy data from the volume
+                temp_container = f"volume_backup_{timestamp}_{volume.replace('-', '_')}"
+                run_command(f"docker run --rm -d --name {temp_container} -v {volume}:/data alpine sleep 60")
                 
-                print(f"Volume {volume_name} data backed up successfully")
-            except json.JSONDecodeError:
-                print(f"Warning: Could not parse JSON for volume {volume_name}")
-        else:
-            print(f"Warning: Volume {volume_name} not found, it will be skipped")
-
-    # Create a manifest file with metadata including volumes
-    with open(os.path.join(backup_dir, 'manifest.json'), 'w') as f:
-        json.dump({
-            'images': images,
-            'containers': containers,
-            'networks': existing_networks,
-            'volumes': list(volumes_to_backup),
-            'date': str(datetime.datetime.now()),
-            'docker_version': run_command("docker version --format '{{.Server.Version}}'")
-        }, f, indent=2)
+                # Create a tarball of the volume data
+                volume_file = os.path.join(volume_dir, 'data.tar')
+                run_command(f"docker exec {temp_container} tar -cf - -C /data . > {volume_file}")
+                
+                # Stop and remove the temp container
+                run_command(f"docker stop {temp_container}")
+                
+                print(f"Volume {volume} data backed up successfully")
+            except Exception as e:
+                print(f"Error backing up volume {volume}: {e}")
+                continue
     
     return backup_dir
 
