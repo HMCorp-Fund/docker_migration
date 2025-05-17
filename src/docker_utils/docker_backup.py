@@ -669,6 +669,10 @@ def restore_docker_backup(backup_file, extract_dir=None, compose_file_path=None)
     # Restore images only - they don't have Compose-specific labels
     restored_images = restore_images(backup_dir)
     
+    # Default return values
+    restored_networks = []
+    restored_containers = []
+    
     # Use provided compose file path if available, otherwise look in default locations
     compose_file = None
     if compose_file_path:
@@ -690,16 +694,40 @@ def restore_docker_backup(backup_file, extract_dir=None, compose_file_path=None)
     
     if compose_file:
         print(f"Found docker-compose file: {compose_file}")
-        # Process with Docker Compose
-        compose_cmd = f"docker compose -f {compose_file} up -d"
-        result = run_command(compose_cmd, capture_output=False)
         
-        # ... rest of your code ...
+        try:
+            # Use Docker Compose to create networks and containers with proper labels
+            compose_cmd = f"docker compose -f {compose_file} up -d"
+            result = run_command(compose_cmd, capture_output=False)
+            
+            # Get the list of containers created by Docker Compose
+            containers_str = run_command(f"docker compose -f {compose_file} ps -q")
+            restored_containers = containers_str.split() if containers_str else []
+            
+            # Get the list of networks created by Docker Compose
+            networks_str = run_command("docker network ls --filter 'label=com.docker.compose.project' --format '{{.Name}}'")
+            restored_networks = networks_str.split() if networks_str else []
+            
+        except Exception as e:
+            print(f"Error using Docker Compose: {e}")
+            print("Falling back to direct restoration method")
+            restored_networks = restore_networks(backup_dir)
+            restored_volumes = restore_volumes(backup_dir)
+            restored_containers = restore_containers(backup_dir, restored_networks, restored_volumes)
     else:
-        print("\nWarning: No docker-compose.yml found.")
+        print("\nWarning: No docker-compose.yml found after extraction.")
         print("Falling back to direct restoration, but Docker Compose commands won't work properly.")
         
-        # Continue with normal restoration
+        # Fall back to direct network/container restoration without labels
+        restored_networks = restore_networks(backup_dir)
+        restored_volumes = restore_volumes(backup_dir)
+        restored_containers = restore_containers(backup_dir, restored_networks, restored_volumes)
+    
+    print(f"\nDocker restoration complete!")
+    print(f"Restored {len(restored_images)} images, {len(restored_networks)} networks, and {len(restored_containers)} containers")
+    
+    # Always return a tuple
+    return (restored_images, restored_networks, restored_containers)
 
 
 def extract_application_files(backup_file, target_dir):
