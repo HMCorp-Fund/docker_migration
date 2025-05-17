@@ -2,6 +2,7 @@ import os
 import zipfile
 import tarfile
 import shutil
+import tempfile
 import argparse
 from docker_utils.compose_parser import parse_compose_file
 from docker_utils.docker_backup import backup_docker_data, backup_all_docker_data, restore_docker_backup
@@ -21,6 +22,12 @@ def main():
     parser.add_argument('--ftp-user', help='FTP username (if not specified in destination)')
     parser.add_argument('--ftp-pass', help='FTP password (if not specified in destination)')
     parser.add_argument('--no-prompt', action='store_true', help='Do not prompt for user input')
+    
+    # Add extract-only related arguments
+    parser.add_argument('--extract-only', action='store_true', 
+                      help='Extract files without restoring Docker components')
+    parser.add_argument('--target-dir', default='.',
+                      help='Directory to extract application files to (for extract-only mode)')
     
     args = parser.parse_args()
     
@@ -82,9 +89,30 @@ def main():
             print("Error: --backup-file is required for restore mode")
             parser.print_help()
             return
+        
+        if args.extract_only:
+            # Just extract files without Docker restoration
+            extract_dir = args.target_dir if args.target_dir else '.'
+            print(f"Extracting all files from backup to {extract_dir}...")
             
-        # Call the restore function
-        restore_docker_backup(args.backup_file)
+            # Extract the main archive
+            temp_dir = tempfile.mkdtemp(prefix="docker_extract_")
+            with tarfile.open(args.backup_file, 'r:*') as tar:
+                tar.extractall(path=temp_dir)
+            
+            # Extract inner archives to target directory
+            for file in os.listdir(temp_dir):
+                file_path = os.path.join(temp_dir, file)
+                if file.endswith('.tar') and tarfile.is_tarfile(file_path):
+                    print(f"Extracting inner archive: {file}")
+                    with tarfile.open(file_path, 'r:*') as tar:
+                        tar.extractall(path=extract_dir)
+            
+            print(f"All files extracted to {extract_dir}")
+            shutil.rmtree(temp_dir)
+        else:
+            # Normal restoration process
+            restored_images, restored_networks, restored_containers = restore_docker_backup(args.backup_file)
         
         # Check if Docker services are running properly after restoration
         print("Checking if Docker services are running properly after restoration...")

@@ -281,16 +281,28 @@ def extract_backup(backup_file, extract_dir=None):
     else:
         raise ValueError(f"File {backup_file} is not a valid tar archive")
     
-    # Look for inner Docker backup archive
+    # Extract Docker backup archive (for images, networks, containers)
     docker_backup_tar = None
+    docker_backup_dir = None
+    
+    # Extract current directory archive (for application files)
+    current_dir_tar = None
+    
+    # Extract additional files archive
+    additional_files_tar = None
+    
+    # Find all inner archives
     for file in os.listdir(extract_dir):
         if file.startswith('docker_backup_') and file.endswith('.tar'):
             docker_backup_tar = os.path.join(extract_dir, file)
-            break
+        elif file.startswith('current_dir_') and file.endswith('.tar'):
+            current_dir_tar = os.path.join(extract_dir, file)
+        elif file.startswith('additional_files_') and file.endswith('.tar'):
+            additional_files_tar = os.path.join(extract_dir, file)
     
+    # Process Docker backup archive
     if docker_backup_tar:
         print(f"Found inner Docker backup archive: {docker_backup_tar}")
-        # Extract the inner Docker backup archive
         docker_extract_dir = os.path.join(extract_dir, "docker_data")
         os.makedirs(docker_extract_dir, exist_ok=True)
         
@@ -301,13 +313,38 @@ def extract_backup(backup_file, extract_dir=None):
         for item in os.listdir(docker_extract_dir):
             item_path = os.path.join(docker_extract_dir, item)
             if os.path.isdir(item_path) and item.startswith('docker_backup_'):
-                return item_path
-    
-        # If we couldn't find a docker_backup_ directory, return the extraction directory
-        return docker_extract_dir
+                docker_backup_dir = item_path
+                break
+        
+        if not docker_backup_dir:
+            docker_backup_dir = docker_extract_dir
     else:
         print(f"Warning: Could not find docker_backup_*.tar file in the archive")
-        return extract_dir
+    
+    # Extract current directory files to the current working directory
+    if current_dir_tar:
+        print(f"Extracting application files from: {current_dir_tar}")
+        current_dir = os.getcwd()
+        
+        with tarfile.open(current_dir_tar, 'r:*') as tar:
+            tar.extractall(path=current_dir)
+        
+        print(f"Application files extracted to current directory: {current_dir}")
+    else:
+        print("No application files (current_dir archive) found in the backup")
+    
+    # Extract additional files
+    if additional_files_tar:
+        print(f"Extracting additional files from: {additional_files_tar}")
+        additional_files_dir = os.path.join(extract_dir, "additional_files")
+        os.makedirs(additional_files_dir, exist_ok=True)
+        
+        with tarfile.open(additional_files_tar, 'r:*') as tar:
+            tar.extractall(path=additional_files_dir)
+            
+        print(f"Additional files extracted to: {additional_files_dir}")
+    
+    return docker_backup_dir if docker_backup_dir else extract_dir
 
 
 def restore_images(backup_dir):
