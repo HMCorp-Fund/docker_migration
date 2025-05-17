@@ -43,17 +43,26 @@ def backup_docker_data(images, containers, networks):
     backup_dir = tempfile.mkdtemp(prefix="docker_backup_")
     print(f"Creating Docker backup in {backup_dir}")
     
-    # Save container details
+    # Save container details and identify volumes
     containers_json = []
     existing_containers = []
+    volumes_to_backup = set()  # Use a set to avoid duplicates
     
-    # First check which containers actually exist
+    # First check which containers actually exist and identify volumes
     for container_id in containers:
         container_info = run_command(f"docker inspect {container_id}")
         if container_info:
             try:
-                containers_json.append(json.loads(container_info)[0])
+                container_data = json.loads(container_info)[0]
+                containers_json.append(container_data)
                 existing_containers.append(container_id)
+                
+                # Extract volume information
+                mounts = container_data.get('Mounts', [])
+                for mount in mounts:
+                    if mount.get('Type') == 'volume':
+                        volumes_to_backup.add(mount.get('Name'))
+                        
             except json.JSONDecodeError:
                 print(f"Warning: Could not parse JSON for container {container_id}")
         else:
@@ -71,10 +80,9 @@ def backup_docker_data(images, containers, networks):
         print(f"Saving image: {image_name}")
         image_filename = os.path.join(backup_dir, 'images', image_name.replace('/', '_').replace(':', '_') + '.tar')
         run_command(f"docker save -o '{image_filename}' '{image_name}'", capture_output=False)
-        # Fix permissions on the saved image file - make sure we use sudo too
-        run_command(f"chmod 644 '{image_filename}'", capture_output=False, use_sudo=True)
+        run_command(f"chmod 644 '{image_filename}'", capture_output=False)
     
-    # Save networks - add same error handling as containers
+    # Save networks
     existing_networks = []
     networks_json = []
     
@@ -98,21 +106,45 @@ def backup_docker_data(images, containers, networks):
         else:
             print(f"Warning: Network {network_name} not found, it will be skipped")
     
-    # Update networks list to only include existing ones
-    networks = existing_networks
-    
-    # Create a manifest file with metadata
+    # Save volumes
+    os.makedirs(os.path.join(backup_dir, 'volumes'), exist_ok=True)
+    for volume_name in volumes_to_backup:
+        print(f"Backing up volume: {volume_name}")
+        
+        # Get volume info
+        volume_info = run_command(f"docker volume inspect {volume_name}")
+        if volume_info:
+            try:
+                # Save volume metadata
+                volume_data = json.loads(volume_info)
+                volume_meta_file = os.path.join(backup_dir, 'volumes', f"{volume_name}.json")
+                with open(volume_meta_file, 'w') as f:
+                    f.write(volume_info)
+                
+                # Export volume data using a temporary container
+                volume_dir = os.path.join(backup_dir, 'volumes', volume_name)
+                os.makedirs(volume_dir, exist_ok=True)
+                
+                # Use alpine to copy data from volume to our backup directory
+                temp_container = f"volume_backup_{volume_name.replace('-', '_')}"
+                run_command(f"docker run --rm --name {temp_container} -v {volume_name}:/source -v {volume_dir}:/backup:rw alpine sh -c 'cd /source && tar -cf - . | tar -xf - -C /backup'", capture_output=False)
+                
+                print(f"Volume {volume_name} data backed up successfully")
+            except json.JSONDecodeError:
+                print(f"Warning: Could not parse JSON for volume {volume_name}")
+        else:
+            print(f"Warning: Volume {volume_name} not found, it will be skipped")
+
+    # Create a manifest file with metadata including volumes
     with open(os.path.join(backup_dir, 'manifest.json'), 'w') as f:
         json.dump({
             'images': images,
             'containers': containers,
-            'networks': networks,
+            'networks': existing_networks,
+            'volumes': list(volumes_to_backup),
             'date': str(datetime.datetime.now()),
             'docker_version': run_command("docker version --format '{{.Server.Version}}'")
         }, f, indent=2)
-    
-    # Fix permissions on the entire backup directory - make sure we use sudo
-    run_command(f"chmod -R a+r '{backup_dir}'", capture_output=False, use_sudo=True)
     
     return backup_dir
 
@@ -384,6 +416,63 @@ def restore_images(backup_dir):
     return restored_images
 
 
+def restore_volumes(backup_dir):
+    """
+    Restore Docker volumes from backup
+    
+    Args:
+        backup_dir (str): Path to the extracted backup directory
+        
+    Returns:
+        list: List of restored volume names
+    """
+    volumes_dir = os.path.join(backup_dir, 'volumes')
+    
+    if not os.path.exists(volumes_dir):
+        print(f"No volumes found in {backup_dir}")
+        return []
+    
+    restored_volumes = []
+    
+    # Get list of volume metadata files
+    volume_files = [f for f in os.listdir(volumes_dir) if f.endswith('.json')]
+    
+    for volume_file in volume_files:
+        volume_name = os.path.splitext(volume_file)[0]
+        volume_path = os.path.join(volumes_dir, volume_file)
+        
+        # Check if volume already exists
+        check_result = run_command(f"docker volume ls --format '{{{{.Name}}}}' --filter name=^{volume_name}$")
+        if check_result and volume_name in check_result.splitlines():
+            print(f"Volume {volume_name} already exists, skipping creation")
+            restored_volumes.append(volume_name)
+            continue
+        
+        # Create the volume
+        print(f"Creating volume: {volume_name}")
+        create_result = run_command(f"docker volume create {volume_name}")
+        
+        if create_result:
+            # Restore volume data
+            volume_data_dir = os.path.join(volumes_dir, volume_name)
+            
+            if os.path.exists(volume_data_dir) and os.path.isdir(volume_data_dir):
+                # Use alpine to copy data from backup to the volume
+                temp_container = f"volume_restore_{volume_name.replace('-', '_')}"
+                print(f"Restoring data to volume: {volume_name}")
+                restore_cmd = f"docker run --rm --name {temp_container} -v {volume_name}:/target -v {volume_data_dir}:/backup:ro alpine sh -c 'cd /backup && tar -cf - . | tar -xf - -C /target'"
+                run_command(restore_cmd, capture_output=False)
+                
+                restored_volumes.append(volume_name)
+                print(f"Successfully restored volume: {volume_name}")
+            else:
+                print(f"Volume {volume_name} created but no data to restore")
+                restored_volumes.append(volume_name)
+    
+    print(f"Restored {len(restored_volumes)} Docker volumes")
+    return restored_volumes
+
+
 def restore_networks(backup_dir):
     """
     Restore Docker networks from backup
@@ -402,43 +491,110 @@ def restore_networks(backup_dir):
     
     restored_networks = []
     
+    # Find all network JSON files
     for network_file in os.listdir(networks_dir):
         if network_file.endswith('.json'):
             network_path = os.path.join(networks_dir, network_file)
             network_name = os.path.splitext(network_file)[0]
             
             with open(network_path, 'r') as f:
-                network_config = json.load(f)
-            
-            # Check if network already exists
-            check_result = run_command(f"docker network ls --format '{{{{.Name}}}}' --filter name=^{network_name}$")
-            if check_result and network_name in check_result.splitlines():
-                print(f"Network {network_name} already exists, skipping creation")
-                restored_networks.append(network_name)
-                continue
-            
-            # Get network driver
-            driver = network_config.get('Driver', 'bridge')
-            
-            # Create network with basic options
-            print(f"Creating network: {network_name} with driver {driver}")
-            result = run_command(f"docker network create --driver {driver} {network_name}")
-            
-            if result:
-                restored_networks.append(network_name)
-                print(f"Successfully created network: {network_name}")
+                try:
+                    # For networks, we often get an array with one object
+                    network_config = json.load(f)
+                    if isinstance(network_config, list):
+                        network_config = network_config[0]
+                
+                    # Check if network already exists
+                    check_result = run_command(f"docker network ls --format '{{{{.Name}}}}' --filter name=^{network_name}$")
+                    if check_result and network_name in check_result.splitlines():
+                        print(f"Network {network_name} already exists, skipping creation")
+                        restored_networks.append(network_name)
+                        continue
+                    
+                    # Skip default networks
+                    if network_name in ['bridge', 'host', 'none']:
+                        print(f"Skipping default network: {network_name}")
+                        continue
+                    
+                    # Get network driver and options
+                    driver = network_config.get('Driver', 'bridge')
+                    
+                    # Build network creation command
+                    cmd = [f"docker network create --driver {driver}"]
+                    
+                    # Add any additional options (subnet, gateway, etc)
+                    ipam_config = network_config.get('IPAM', {}).get('Config', [])
+                    for config in ipam_config:
+                        if 'Subnet' in config:
+                            cmd.append(f"--subnet={config['Subnet']}")
+                        if 'Gateway' in config:
+                            cmd.append(f"--gateway={config['Gateway']}")
+                            
+                    # Add network name
+                    cmd.append(network_name)
+                    
+                    # Create the network
+                    print(f"Creating network: {network_name} with driver {driver}")
+                    result = run_command(" ".join(cmd))
+                    
+                    if result:
+                        restored_networks.append(network_name)
+                        print(f"Successfully created network: {network_name}")
+                except json.JSONDecodeError:
+                    print(f"Error: Could not parse network configuration for {network_name}")
+                except Exception as e:
+                    print(f"Error creating network {network_name}: {e}")
     
     print(f"Restored {len(restored_networks)} Docker networks")
     return restored_networks
 
 
-def restore_containers(backup_dir, networks):
+def restore_application_files(backup_file):
+    """Extract application files from backup to current directory"""
+    temp_dir = tempfile.mkdtemp(prefix="docker_extract_")
+    current_dir = os.getcwd()
+    
+    try:
+        # Extract main archive
+        with tarfile.open(backup_file, 'r:*') as tar:
+            tar.extractall(path=temp_dir)
+        
+        # Find and extract current_dir archive
+        current_dir_tar = None
+        for file in os.listdir(temp_dir):
+            if file.startswith('current_dir_') and file.endswith('.tar'):
+                current_dir_tar = os.path.join(temp_dir, file)
+                break
+        
+        if current_dir_tar:
+            print(f"Found application files archive: {current_dir_tar}")
+            print(f"Extracting application files to current directory: {current_dir}")
+            with tarfile.open(current_dir_tar, 'r:*') as tar:
+                # Extract with caution - don't overwrite existing files
+                for member in tar.getmembers():
+                    target_path = os.path.join(current_dir, member.name)
+                    if os.path.exists(target_path):
+                        print(f"File already exists, skipping: {member.name}")
+                    else:
+                        tar.extract(member, path=current_dir)
+                        print(f"Extracted: {member.name}")
+            
+            print("Application files successfully extracted")
+        else:
+            print("No application files archive found in backup")
+    finally:
+        # Clean up temp directory
+        shutil.rmtree(temp_dir)
+
+
+def restore_containers(backup_dir, networks, volumes):
     """
     Restore Docker containers from backup
     
     Args:
         backup_dir (str): Path to the extracted backup directory
         networks (list): List of available networks
+        volumes (list): List of available volumes
         
     Returns:
         list: List of restored container names
@@ -493,7 +649,7 @@ def restore_containers(backup_dir, networks):
         for mount in mounts:
             source = mount.get('Source')
             target = mount.get('Target')
-            if source and target:
+            if source and target and source in volumes:
                 cmd.append(f"-v {source}:{target}")
         
         # Add environment variables
@@ -546,13 +702,23 @@ def restore_docker_backup(backup_file, extract_dir=None):
     # Extract the backup
     backup_dir = extract_backup(backup_file, extract_dir)
     
-    # Restore Docker components in the correct order
+    # Restore Docker images
     restored_images = restore_images(backup_dir)
+    
+    # Restore Docker volumes
+    restored_volumes = restore_volumes(backup_dir)
+    
+    # Restore Docker networks
     restored_networks = restore_networks(backup_dir)
-    restored_containers = restore_containers(backup_dir, restored_networks)
+    
+    # Restore Docker containers
+    restored_containers = restore_containers(backup_dir, restored_networks, restored_volumes)
+    
+    # Extract application files (docker-compose.yml and related files)
+    restore_application_files(backup_file)
     
     print(f"\nDocker restoration complete!")
-    print(f"Restored {len(restored_images)} images, {len(restored_networks)} networks, and {len(restored_containers)} containers")
+    print(f"Restored {len(restored_images)} images, {len(restored_networks)} networks, {len(restored_volumes)} volumes, and {len(restored_containers)} containers")
     
     return (restored_images, restored_networks, restored_containers)
 
