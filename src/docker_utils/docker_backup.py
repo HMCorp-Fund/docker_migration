@@ -159,18 +159,25 @@ def backup_all_docker_data():
         list: List of container IDs
         list: List of network IDs
     """
-    # Get all containers
+    # Get all containers (running and stopped)
     containers_raw = run_command("docker ps -a --format '{{.ID}}'")
     containers = containers_raw.splitlines() if containers_raw else []
     
-    # Get all images used by those containers
+    # Get all images, not just those used by containers
+    images_raw = run_command("docker images --format '{{.Repository}}:{{.Tag}}'")
     images = []
+    if images_raw:
+        for img in images_raw.splitlines():
+            if img != '<none>:<none>':  # Skip untagged images
+                images.append(img)
+    
+    # Get images used by containers too (as backup)
     for container in containers:
         image = run_command(f"docker inspect --format='{{{{.Config.Image}}}}' {container}")
-        if image:
+        if image and image not in images:
             images.append(image)
     
-    # Get all networks used
+    # Get all networks
     networks_raw = run_command("docker network ls --format '{{.Name}}'")
     networks = networks_raw.splitlines() if networks_raw else []
     networks = [n for n in networks if n not in ('bridge', 'host', 'none')]
@@ -758,13 +765,17 @@ def extract_application_files(backup_file, target_dir):
         with tarfile.open(backup_file, 'r:*') as tar:
             tar.extractall(path=temp_dir)
         
-        # Find and extract current_dir archive
+        # Find both current_dir and additional_path archives
         current_dir_tar = None
+        additional_path_tar = None
+        
         for file in os.listdir(temp_dir):
             if file.startswith('current_dir_') and file.endswith('.tar'):
                 current_dir_tar = os.path.join(temp_dir, file)
-                break
+            elif file.startswith('additional_path_') and file.endswith('.tar'):
+                additional_path_tar = os.path.join(temp_dir, file)
         
+        # Extract current_dir archive to target directory
         if current_dir_tar:
             print(f"Found application files archive: {current_dir_tar}")
             print(f"Extracting application files to: {target_dir}")
@@ -774,7 +785,20 @@ def extract_application_files(backup_file, target_dir):
             success = True
         else:
             print("No application files archive found in backup")
-            success = False
+        
+        # Extract additional_path archive to additional_path subdirectory
+        if additional_path_tar:
+            print(f"Found additional path archive: {additional_path_tar}")
+            additional_extract_dir = os.path.join(target_dir, "additional_path")
+            os.makedirs(additional_extract_dir, exist_ok=True)
+            
+            print(f"Extracting additional path files to: {additional_extract_dir}")
+            with tarfile.open(additional_path_tar, 'r:*') as tar:
+                tar.extractall(path=additional_extract_dir)
+            
+            print(f"Additional path files extracted to: {additional_extract_dir}")
+            success = True
+        
     finally:
         # Clean up temp directory
         shutil.rmtree(temp_dir)
