@@ -37,6 +37,10 @@ def main():
     parser.add_argument('--additional-path', 
                       help='Additional path to include in backup as a separate archive')
     
+    # Add a new argument in main.py
+    parser.add_argument('--compose-file-path', 
+                      help='Path to docker-compose.yml file (for restore mode)')
+    
     args = parser.parse_args()
     
     compose_file = 'docker-compose.yml'
@@ -150,7 +154,20 @@ def main():
             shutil.rmtree(temp_dir)
         else:
             # Normal restoration process
-            restored_images, restored_networks, restored_containers = restore_docker_backup(args.backup_file)
+            compose_file_path = args.compose_file_path
+            
+            # If no compose file is specified but we extracted an additional path,
+            # automatically check for docker-compose.yml in the additional_path directory
+            if not compose_file_path and os.path.exists("additional_path"):
+                potential_compose_file = os.path.join("additional_path", "docker-compose.yml")
+                if os.path.exists(potential_compose_file):
+                    print(f"Found docker-compose.yml in additional_path: {potential_compose_file}")
+                    compose_file_path = potential_compose_file
+            
+            restored_images, restored_networks, restored_containers = restore_docker_backup(
+                args.backup_file, 
+                compose_file_path=compose_file_path
+            )
             
             # Wait a moment for services to start
             print("Waiting for services to start...")

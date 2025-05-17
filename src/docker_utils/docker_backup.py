@@ -645,13 +645,14 @@ def restore_containers(backup_dir, networks, volumes):
     return restored_containers
 
 
-def restore_docker_backup(backup_file, extract_dir=None):
+def restore_docker_backup(backup_file, extract_dir=None, compose_file_path=None):
     """
     Restore a Docker backup with proper Docker Compose integration
     
     Args:
         backup_file (str): Path to the backup file
         extract_dir (str, optional): Directory to extract to
+        compose_file_path (str, optional): Path to docker-compose.yml file
         
     Returns:
         tuple: (restored_images, restored_networks, restored_containers)
@@ -668,111 +669,37 @@ def restore_docker_backup(backup_file, extract_dir=None):
     # Restore images only - they don't have Compose-specific labels
     restored_images = restore_images(backup_dir)
     
-    # Check if docker-compose.yml exists in current directory
-    compose_file = os.path.join(current_dir, 'docker-compose.yml')
-    compose_yaml_file = os.path.join(current_dir, 'docker-compose.yaml')
-    
-    if os.path.exists(compose_file) or os.path.exists(compose_yaml_file):
-        # Extract volume data to a temporary location
-        volumes_dir = os.path.join(backup_dir, 'volumes')
-        temp_volumes_data = None
-        
-        if os.path.exists(volumes_dir):
-            # Save volume data for later restoration
-            temp_volumes_data = os.path.join(tempfile.mkdtemp(), 'volume_data')
-            shutil.copytree(volumes_dir, temp_volumes_data)
-        
-        # Check for existing resources that might conflict with Docker Compose
-        print("Checking for existing Docker resources that might conflict with Docker Compose...")
-        
-        # Get networks from docker-compose.yml to check for conflicts
-        networks_to_check = []
-        try:
-            import yaml # type: ignore
-            if os.path.exists(compose_file):
-                with open(compose_file, 'r') as f:
-                    compose_data = yaml.safe_load(f)
-            else:
-                with open(compose_yaml_file, 'r') as f:
-                    compose_data = yaml.safe_load(f)
-            
-            # Extract network names
-            if compose_data and 'networks' in compose_data:
-                networks_to_check = list(compose_data['networks'].keys())
-                
-                # For each network, check if it exists and add external: true if needed
-                for network in networks_to_check:
-                    # Check if network exists
-                    check_result = run_command(f"docker network ls --format '{{{{.Name}}}}' --filter name={network}")
-                    if check_result and network in check_result.splitlines():
-                        print(f"Network {network} already exists, marking as external in docker-compose.yml")
-                        # Add external: true to the network in docker-compose.yml
-                        compose_data['networks'][network]['external'] = True
-                
-                # Write the updated docker-compose.yml
-                if os.path.exists(compose_file):
-                    with open(compose_file, 'w') as f:
-                        yaml.dump(compose_data, f)
-                else:
-                    with open(compose_yaml_file, 'w') as f:
-                        yaml.dump(compose_data, f)
-                
-        except Exception as e:
-            print(f"Warning: Error parsing docker-compose.yml: {e}")
-        
-        print("\nStarting containers using Docker Compose...")
-        # Use Docker Compose to create networks and containers with proper labels
-        result = run_command("docker compose up -d", capture_output=False)
-        
-        if result:
-            print("Docker Compose successfully started containers with proper labels")
-            # Get the list of containers created by Docker Compose
-            containers_str = run_command("docker compose ps -q")
-            restored_containers = containers_str.split() if containers_str else []
-            
-            # Get the list of networks created by Docker Compose
-            networks_str = run_command("docker network ls --filter 'label=com.docker.compose.project' --format '{{.Name}}'")
-            restored_networks = networks_str.split() if networks_str else []
-            
-            # Restore volume data if available
-            if temp_volumes_data:
-                print("\nRestoring volume data...")
-                for volume_dir in os.listdir(temp_volumes_data):
-                    if os.path.isdir(os.path.join(temp_volumes_data, volume_dir)):
-                        volume_data_path = os.path.join(temp_volumes_data, volume_dir)
-                        # Use docker run to copy data into the volume
-                        print(f"Restoring data for volume: {volume_dir}")
-                        
-                        # Create a temporary container to copy data
-                        temp_container = f"vol_restore_{volume_dir}"
-                        run_command(f"docker run --rm -d --name {temp_container} -v {volume_dir}:/target alpine sleep 60")
-                        
-                        # Copy data into the volume
-                        run_command(f"docker cp {volume_data_path}/. {temp_container}:/target/", capture_output=False)
-                        
-                        # Stop and remove the temp container
-                        run_command(f"docker stop {temp_container}")
-                
-                # Clean up temporary directory
-                shutil.rmtree(os.path.dirname(temp_volumes_data))
+    # Use provided compose file path if available, otherwise look in default locations
+    compose_file = None
+    if compose_file_path:
+        if os.path.exists(compose_file_path):
+            compose_file = compose_file_path
+            print(f"Using specified docker-compose.yml at: {compose_file_path}")
         else:
-            print("Warning: Docker Compose failed to start containers. Falling back to direct restoration.")
-            # Fall back to direct network/container restoration without labels
-            restored_networks = restore_networks(backup_dir)
-            restored_containers = restore_containers(backup_dir, restored_networks, [])
+            print(f"Warning: Specified docker-compose.yml not found at {compose_file_path}")
+    
+    # Fall back to default locations if no compose file specified or found
+    if not compose_file:
+        default_compose_file = os.path.join(current_dir, 'docker-compose.yml')
+        default_compose_yaml_file = os.path.join(current_dir, 'docker-compose.yaml')
+        
+        if os.path.exists(default_compose_file):
+            compose_file = default_compose_file
+        elif os.path.exists(default_compose_yaml_file):
+            compose_file = default_compose_yaml_file
+    
+    if compose_file:
+        print(f"Found docker-compose file: {compose_file}")
+        # Process with Docker Compose
+        compose_cmd = f"docker compose -f {compose_file} up -d"
+        result = run_command(compose_cmd, capture_output=False)
+        
+        # ... rest of your code ...
     else:
-        print("\nWarning: No docker-compose.yml found after extraction.")
+        print("\nWarning: No docker-compose.yml found.")
         print("Falling back to direct restoration, but Docker Compose commands won't work properly.")
         
-        # Fall back to direct network/container restoration without labels
-        restored_networks = restore_networks(backup_dir)
-        restored_volumes = restore_volumes(backup_dir)
-        restored_containers = restore_containers(backup_dir, restored_networks, restored_volumes)
-    
-    print(f"\nDocker restoration complete!")
-    print(f"Restored {len(restored_images)} images, {len(restored_networks)} networks, and {len(restored_containers)} containers")
-    
-    return (restored_images, restored_networks, restored_containers)
+        # Continue with normal restoration
 
 
 def extract_application_files(backup_file, target_dir):
