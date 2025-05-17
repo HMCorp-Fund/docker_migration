@@ -228,10 +228,283 @@ def transfer_backup(backup_file, destination):
         print(f"Error transferring backup: {e}")
 
 
+def extract_backup(backup_file, extract_dir=None):
+    """
+    Extract a Docker backup archive
+    
+    Args:
+        backup_file (str): Path to the backup file
+        extract_dir (str, optional): Directory to extract to (default: creates temp dir)
+        
+    Returns:
+        str: Path to the extracted backup directory
+    """
+    if not extract_dir:
+        extract_dir = tempfile.mkdtemp(prefix="docker_restore_")
+    
+    print(f"Extracting backup {backup_file} to {extract_dir}...")
+    
+    # Check if it's a tarfile
+    if tarfile.is_tarfile(backup_file):
+        with tarfile.open(backup_file, 'r:*') as tar:
+            tar.extractall(path=extract_dir)
+    else:
+        raise ValueError(f"File {backup_file} is not a valid tar archive")
+    
+    # Find the docker_backup directory
+    backup_dir = None
+    for root, dirs, files in os.walk(extract_dir):
+        for d in dirs:
+            if d.startswith('docker_backup_'):
+                backup_dir = os.path.join(root, d)
+                break
+        if backup_dir:
+            break
+            
+    if not backup_dir:
+        print(f"Warning: Could not find docker_backup_ directory in the archive")
+        backup_dir = extract_dir
+    
+    return backup_dir
+
+
+def restore_images(backup_dir):
+    """
+    Restore Docker images from backup
+    
+    Args:
+        backup_dir (str): Path to the extracted backup directory
+        
+    Returns:
+        list: List of restored image names
+    """
+    images_dir = os.path.join(backup_dir, 'images')
+    
+    if not os.path.exists(images_dir):
+        print(f"No images found in {backup_dir}")
+        return []
+    
+    restored_images = []
+    
+    for image_file in os.listdir(images_dir):
+        if image_file.endswith('.tar'):
+            image_path = os.path.join(images_dir, image_file)
+            print(f"Loading image: {image_file}")
+            result = run_command(f"docker load -i '{image_path}'")
+            if result:
+                # Extract image name from docker load output
+                # Output format: "Loaded image: image:tag"
+                if "Loaded image" in result:
+                    image_name = result.split("Loaded image", 1)[1].strip(": \n")
+                    restored_images.append(image_name)
+                    print(f"Successfully loaded image: {image_name}")
+                else:
+                    print(f"Loaded image but couldn't determine name from: {result}")
+    
+    print(f"Restored {len(restored_images)} Docker images")
+    return restored_images
+
+
+def restore_networks(backup_dir):
+    """
+    Restore Docker networks from backup
+    
+    Args:
+        backup_dir (str): Path to the extracted backup directory
+        
+    Returns:
+        list: List of restored network names
+    """
+    networks_dir = os.path.join(backup_dir, 'networks')
+    
+    if not os.path.exists(networks_dir):
+        print(f"No networks found in {backup_dir}")
+        return []
+    
+    restored_networks = []
+    
+    for network_file in os.listdir(networks_dir):
+        if network_file.endswith('.json'):
+            network_path = os.path.join(networks_dir, network_file)
+            network_name = os.path.splitext(network_file)[0]
+            
+            with open(network_path, 'r') as f:
+                network_config = json.load(f)
+            
+            # Check if network already exists
+            check_result = run_command(f"docker network ls --format '{{{{.Name}}}}' --filter name=^{network_name}$")
+            if check_result and network_name in check_result.splitlines():
+                print(f"Network {network_name} already exists, skipping creation")
+                restored_networks.append(network_name)
+                continue
+            
+            # Get network driver
+            driver = network_config.get('Driver', 'bridge')
+            
+            # Create network with basic options
+            print(f"Creating network: {network_name} with driver {driver}")
+            result = run_command(f"docker network create --driver {driver} {network_name}")
+            
+            if result:
+                restored_networks.append(network_name)
+                print(f"Successfully created network: {network_name}")
+    
+    print(f"Restored {len(restored_networks)} Docker networks")
+    return restored_networks
+
+
+def restore_containers(backup_dir, networks):
+    """
+    Restore Docker containers from backup
+    
+    Args:
+        backup_dir (str): Path to the extracted backup directory
+        networks (list): List of available networks
+        
+    Returns:
+        list: List of restored container names
+    """
+    containers_file = os.path.join(backup_dir, 'containers.json')
+    
+    if not os.path.exists(containers_file):
+        print(f"No containers found in {backup_dir}")
+        return []
+    
+    with open(containers_file, 'r') as f:
+        containers = json.load(f)
+    
+    restored_containers = []
+    
+    for container in containers:
+        container_name = container.get('Name', '').strip('/')
+        image = container.get('Config', {}).get('Image')
+        
+        if not container_name or not image:
+            print(f"Missing container name or image for container: {container}")
+            continue
+        
+        # Check if container already exists
+        check_result = run_command(f"docker ps -a --format '{{{{.Names}}}}' --filter name=^{container_name}$")
+        if check_result and container_name in check_result.splitlines():
+            print(f"Container {container_name} already exists, skipping creation")
+            restored_containers.append(container_name)
+            continue
+        
+        # Build container creation command
+        cmd = ["docker run -d"]
+        
+        # Add container name
+        cmd.append(f"--name {container_name}")
+        
+        # Add restart policy
+        restart_policy = container.get('HostConfig', {}).get('RestartPolicy', {}).get('Name')
+        if restart_policy:
+            cmd.append(f"--restart {restart_policy}")
+        
+        # Add port mappings
+        port_bindings = container.get('HostConfig', {}).get('PortBindings', {})
+        for container_port, host_bindings in port_bindings.items():
+            for binding in host_bindings:
+                host_port = binding.get('HostPort')
+                if host_port:
+                    cmd.append(f"-p {host_port}:{container_port.split('/')[0]}")
+        
+        # Add volume mounts
+        mounts = container.get('HostConfig', {}).get('Mounts', [])
+        for mount in mounts:
+            source = mount.get('Source')
+            target = mount.get('Target')
+            if source and target:
+                cmd.append(f"-v {source}:{target}")
+        
+        # Add environment variables
+        env_vars = container.get('Config', {}).get('Env', [])
+        for env in env_vars:
+            if '=' in env:  # Only add properly formed env vars
+                cmd.append(f"-e '{env}'")
+        
+        # Add networks
+        container_networks = container.get('NetworkSettings', {}).get('Networks', {})
+        for network_name in container_networks:
+            if network_name in networks:
+                cmd.append(f"--network {network_name}")
+        
+        # Add the image name
+        cmd.append(image)
+        
+        # Add command if present
+        container_cmd = container.get('Config', {}).get('Cmd')
+        if container_cmd and isinstance(container_cmd, list):
+            cmd.append(" ".join(container_cmd))
+        
+        # Create the container
+        print(f"Creating container: {container_name}")
+        full_cmd = " ".join(cmd)
+        print(f"Command: {full_cmd}")
+        result = run_command(full_cmd)
+        
+        if result:
+            restored_containers.append(container_name)
+            print(f"Successfully created container: {container_name}")
+    
+    print(f"Restored {len(restored_containers)} Docker containers")
+    return restored_containers
+
+
+def restore_docker_backup(backup_file, extract_dir=None):
+    """
+    Restore a Docker backup
+    
+    Args:
+        backup_file (str): Path to the backup file
+        extract_dir (str, optional): Directory to extract to
+        
+    Returns:
+        tuple: (restored_images, restored_networks, restored_containers)
+    """
+    print(f"Starting Docker restoration from {backup_file}")
+    
+    # Extract the backup
+    backup_dir = extract_backup(backup_file, extract_dir)
+    
+    # Restore Docker components in the correct order
+    restored_images = restore_images(backup_dir)
+    restored_networks = restore_networks(backup_dir)
+    restored_containers = restore_containers(backup_dir, restored_networks)
+    
+    print(f"\nDocker restoration complete!")
+    print(f"Restored {len(restored_images)} images, {len(restored_networks)} networks, and {len(restored_containers)} containers")
+    
+    return (restored_images, restored_networks, restored_containers)
+
+
 def main():
-    backup_dir = './__docker_backup'
-    backup_file = create_docker_backup(backup_dir, include_current_dir=True)
-    transfer_backup(backup_file, '~/docker_backups')
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Docker Backup and Restoration Tool')
+    parser.add_argument('--action', choices=['backup', 'restore'], default='backup',
+                      help='Action to perform: backup or restore')
+    parser.add_argument('--backup-file', help='Path to backup file (for restore)')
+    parser.add_argument('--extract-dir', help='Directory to extract backup (for restore)')
+    parser.add_argument('--backup-dir', default='./__docker_backup',
+                      help='Directory to store backup (for backup)')
+    parser.add_argument('--include-current-dir', action='store_true',
+                      help='Include current directory in backup (for backup)')
+    parser.add_argument('--destination', default='~/docker_backups',
+                      help='Destination path for backup transfer (for backup)')
+    
+    args = parser.parse_args()
+    
+    if args.action == 'backup':
+        backup_dir = args.backup_dir
+        backup_file = create_docker_backup(backup_dir, include_current_dir=args.include_current_dir)
+        transfer_backup(backup_file, args.destination)
+    elif args.action == 'restore':
+        if not args.backup_file:
+            print("Error: --backup-file is required for restore action")
+            parser.print_help()
+            return
+        restore_docker_backup(args.backup_file, args.extract_dir)
 
 
 if __name__ == "__main__":
