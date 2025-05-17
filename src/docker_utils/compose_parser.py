@@ -16,50 +16,58 @@ def parse_compose_file(compose_file):
         with open(compose_file, 'r') as f:
             compose_data = yaml.safe_load(f)
         
+        if not compose_data:
+            print(f"Warning: Empty or invalid docker-compose.yml file: {compose_file}")
+            return [], [], [], [], [compose_file]
+        
         # Extract images
         images = []
         containers = []
         additional_files = []
         
-        if 'services' in compose_data:
+        if 'services' in compose_data and compose_data['services']:
             for service_name, service in compose_data['services'].items():
-                if 'image' in service:
+                if isinstance(service, dict) and 'image' in service:
                     images.append(service['image'])
                     
-                # Add container name if specified
-                container_name = service.get('container_name', f"{os.path.basename(os.path.dirname(compose_file))}-{service_name}")
-                containers.append(container_name)
+                    # Add container name if specified
+                    container_name = service.get('container_name', f"{os.path.basename(os.path.dirname(compose_file))}-{service_name}")
+                    containers.append(container_name)
+        else:
+            print(f"Warning: No services found in docker-compose.yml")
         
         # Extract networks
         networks = []
-        if 'networks' in compose_data:
-            networks = list(compose_data['networks'].keys())
-            
-            # For external networks, try to get the actual name
-            for network_name, network in compose_data['networks'].items():
-                if 'external' in network:
-                    if isinstance(network['external'], dict) and 'name' in network['external']:
-                        networks.append(network['external']['name'])
-                    elif network['external'] == True and 'name' in network:
-                        networks.append(network['name'])
+        if 'networks' in compose_data and compose_data['networks']:
+            if isinstance(compose_data['networks'], dict):
+                networks = list(compose_data['networks'].keys())
+                
+                # For external networks, try to get the actual name
+                for network_name, network in compose_data['networks'].items():
+                    if isinstance(network, dict) and 'external' in network:
+                        if isinstance(network['external'], dict) and 'name' in network['external']:
+                            networks.append(network['external']['name'])
+                        elif network['external'] is True and 'name' in network:
+                            networks.append(network['name'])
         
         # Extract volumes
         volumes = []
-        if 'volumes' in compose_data:
-            volumes = list(compose_data['volumes'].keys())
-            
-            # For external volumes, try to get the actual name
-            for volume_name, volume in compose_data['volumes'].items():
-                if isinstance(volume, dict) and 'external' in volume:
-                    if isinstance(volume['external'], dict) and 'name' in volume['external']:
-                        volumes.append(volume['external']['name'])
-                    elif volume['external'] == True and 'name' in volume:
-                        volumes.append(volume['name'])
+        if 'volumes' in compose_data and compose_data['volumes']:
+            if isinstance(compose_data['volumes'], dict):
+                volumes = list(compose_data['volumes'].keys())
+                
+                # For external volumes, try to get the actual name
+                for volume_name, volume in compose_data['volumes'].items():
+                    if isinstance(volume, dict) and 'external' in volume:
+                        if isinstance(volume['external'], dict) and 'name' in volume['external']:
+                            volumes.append(volume['external']['name'])
+                        elif volume['external'] is True and 'name' in volume:
+                            volumes.append(volume['name'])
         
         # Add environment files to additional files list
         if 'services' in compose_data:
             for service_name, service in compose_data['services'].items():
-                if 'env_file' in service:
+                if isinstance(service, dict) and 'env_file' in service:
                     if isinstance(service['env_file'], list):
                         for env_file in service['env_file']:
                             additional_files.append(env_file)
@@ -73,7 +81,7 @@ def parse_compose_file(compose_file):
         
     except Exception as e:
         print(f"Error parsing docker-compose file: {e}")
-        return [], [], [], [], []
+        return [], [], [], [], [compose_file]
 
 def main():
     compose_file_path = 'docker-compose.yml'
