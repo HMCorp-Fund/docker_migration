@@ -1,6 +1,7 @@
 docker
-docker-compose
+# Use Docker Compose V2 plugin instead of the standalone package
+# docker-compose
 requests
 paramiko
-pyyaml>=6.0
+pyyaml<6.0,>=3.10
 zipfile36
