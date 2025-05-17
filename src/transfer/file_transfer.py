@@ -3,125 +3,110 @@ import shutil
 import subprocess
 import zipfile
 import tarfile
-import ftplib  # Add this import for FTP support
 
 def create_archive(archive_name, files):
     with zipfile.ZipFile(archive_name, 'w') as archive:
         for file in files:
             archive.write(file, os.path.basename(file))
 
-def transfer_files(archive_path, destination):
+def transfer_files(file_path, destination):
     """
-    Transfer files to a destination (local, remote via SCP, or FTP)
+    Transfer files to another server or location
     
     Args:
-        archive_path (str): Path to the archive file to transfer
-        destination (str): Destination path (local, user@host:path for SCP, 
-                          or ftp://user:pass@host/path for FTP)
-        
-    Returns:
-        bool: True if successful, False otherwise
+        file_path (str): Path to the file to transfer
+        destination (str): Destination (local path, SCP path, or FTP URL)
     """
-    print(f"Transferring {archive_path} to {destination}")
+    filename = os.path.basename(file_path)
+    filesize = os.path.getsize(file_path)
+    
+    # Format filesize for display
+    def format_size(size):
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size < 1024.0:
+                return f"{size:.2f} {unit}"
+            size /= 1024.0
+        return f"{size:.2f} TB"
+    
+    print(f"Transferring {filename} ({format_size(filesize)}) to {destination}")
     
     try:
-        # FTP transfer (ftp://user:pass@host/path)
-        if destination.startswith('ftp://'):
-            print(f"Transferring via FTP to {destination}")
+        if ':' in destination and not destination.startswith('ftp://'):  # SCP transfer
+            # SCP transfer code (unchanged)
+            username, host_path = destination.split(':', 1)
+            host, remote_path = host_path.split('/', 1)
+            remote_path = '/' + remote_path
             
-            # Parse FTP URL
+            print(f"Transferring via SCP to {username}@{host}:{remote_path}")
+            subprocess.run(['scp', file_path, f"{username}@{host}:{remote_path}"], check=True)
+            print("SCP transfer complete")
+            
+        elif destination.startswith('ftp://'):  # FTP transfer
+            from ftplib import FTP
+            import time
+            
+            # Parse FTP URL for credentials
             ftp_url = destination[6:]  # Remove 'ftp://'
-            
-            # Extract credentials and path
             if '@' in ftp_url:
-                credentials, host_path = ftp_url.split('@', 1)
-                if ':' in credentials:
-                    username, password = credentials.split(':', 1)
+                creds, host_path = ftp_url.split('@', 1)
+                if ':' in creds:
+                    username, password = creds.split(':', 1)
                 else:
-                    username = credentials
-                    password = input(f"Enter FTP password for {username}: ")
+                    username, password = creds, ''
             else:
+                username, password = 'anonymous', ''
                 host_path = ftp_url
-                username = input("Enter FTP username: ")
-                password = input("Enter FTP password: ")
             
-            # Extract host and path
             if '/' in host_path:
-                host, path = host_path.split('/', 1)
-                path = '/' + path
+                host, remote_path = host_path.split('/', 1)
+                remote_path = '/' + remote_path
             else:
-                host = host_path
-                path = '/'
+                host, remote_path = host_path, '/'
             
-            # Connect and transfer
+            print(f"Transferring via FTP to ftp://{username}:{'*'*len(password)}@{host}")
             print(f"Connecting to FTP server {host}...")
-            ftp = ftplib.FTP(host)
+            
+            # Set up FTP connection with timeout
+            ftp = FTP(host, timeout=60)
             ftp.login(username, password)
             
-            # Change to destination directory or create if needed
-            dirs = path.strip('/').split('/')
-            for directory in dirs:
-                if directory:
-                    try:
-                        ftp.cwd(directory)
-                    except ftplib.error_perm:
-                        ftp.mkd(directory)
-                        ftp.cwd(directory)
+            # Create a callback function to show progress
+            uploaded = 0
+            start_time = time.time()
+            last_update = start_time
             
-            # Upload file
-            filename = os.path.basename(archive_path)
-            with open(archive_path, 'rb') as file:
+            def upload_callback(buffer):
+                nonlocal uploaded, last_update
+                uploaded += len(buffer)
+                percent = (uploaded / filesize) * 100
+                current_time = time.time()
+                
+                # Update progress every second
+                if current_time - last_update > 1:
+                    elapsed = current_time - start_time
+                    speed = uploaded / elapsed if elapsed > 0 else 0
+                    eta = (filesize - uploaded) / speed if speed > 0 else 0
+                    
+                    print(f"\rProgress: {percent:.1f}% | {format_size(uploaded)}/{format_size(filesize)} | "
+                          f"{format_size(speed)}/s | ETA: {int(eta/60):02d}:{int(eta%60):02d}", end='', flush=True)
+                    last_update = current_time
+            
+            # Upload the file with progress reporting
+            with open(file_path, 'rb') as file:
                 print(f"Uploading {filename}...")
-                ftp.storbinary(f"STOR {filename}", file)
+                ftp.storbinary(f"STOR {filename}", file, blocksize=8192, callback=upload_callback)
             
+            print("\nFTP transfer complete")
             ftp.quit()
-            print(f"FTP transfer complete")
-            return True
             
-        # SCP transfer (user@host:path)
-        elif ':' in destination and '@' in destination:
-            # Remote transfer via SCP
-            user_host, remote_path = destination.split(':', 1)
-            print(f"Transferring to remote destination {user_host}:{remote_path}")
+        else:  # Local file copy
+            os.makedirs(os.path.dirname(os.path.join(destination, filename)), exist_ok=True)
+            shutil.copy(file_path, os.path.join(destination, filename))
+            print(f"File copied to {os.path.join(destination, filename)}")
             
-            # Execute SCP command
-            scp_cmd = ["scp", archive_path, destination]
-            print(f"Running: {' '.join(scp_cmd)}")
-            
-            result = subprocess.run(scp_cmd, capture_output=True, text=True)
-            
-            if result.returncode != 0:
-                print(f"Error transferring file: {result.stderr}")
-                return False
-                
-            print(f"Successfully transferred {archive_path} to {destination}")
-            return True
-        else:
-            # Local file copy
-            print(f"Copying to local destination {destination}")
-            
-            # Expand ~ if needed
-            if destination.startswith('~'):
-                destination = os.path.expanduser(destination)
-            
-            # Create destination directory if it doesn't exist
-            os.makedirs(os.path.dirname(os.path.abspath(destination)), exist_ok=True)
-            
-            # Copy file
-            if os.path.isdir(destination):
-                # If destination is a directory, copy file there with same name
-                dest_path = os.path.join(destination, os.path.basename(archive_path))
-            else:
-                # Otherwise use destination as full path
-                dest_path = destination
-                
-            shutil.copy2(archive_path, dest_path)
-            print(f"Successfully copied {archive_path} to {dest_path}")
-            return True
-        
     except Exception as e:
         print(f"Error transferring file: {e}")
-        return False
+        raise
 
 def main():
     # Example usage

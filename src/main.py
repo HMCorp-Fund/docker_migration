@@ -188,6 +188,25 @@ def main():
                     print(f"Found docker-compose.yml in Docker source base directory: {potential_compose_file}")
                     compose_file_path = potential_compose_file
             
+            # If no compose file found yet, check the first directory inside docker_src_base_dir
+            if not compose_file_path and os.path.exists("docker_src_base_dir"):
+                # List items in docker_src_base_dir
+                items = os.listdir("docker_src_base_dir")
+                
+                # Filter for directories only
+                subdirs = [item for item in items if os.path.isdir(os.path.join("docker_src_base_dir", item))]
+                
+                # If subdirectories exist, check the first one for docker-compose.yml
+                if subdirs:
+                    first_subdir = subdirs[0]
+                    nested_compose_path = os.path.join("docker_src_base_dir", first_subdir, "docker-compose.yml")
+                    
+                    if os.path.exists(nested_compose_path):
+                        print(f"Found docker-compose.yml in first subdirectory: {nested_compose_path}")
+                        compose_file_path = nested_compose_path
+                    else:
+                        print(f"No docker-compose.yml found in {first_subdir} directory")
+            
             restored_images, restored_networks, restored_containers = restore_docker_backup(
                 args.backup_file, 
                 compose_file_path=compose_file_path
