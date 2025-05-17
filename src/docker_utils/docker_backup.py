@@ -320,6 +320,30 @@ def extract_backup(backup_file, extract_dir=None):
     else:
         raise ValueError(f"File {backup_file} is not a valid tar archive")
     
+    # Look for inner Docker backup archive
+    docker_backup_tar = None
+    for file in os.listdir(extract_dir):
+        if file.startswith('docker_backup_') and file.endswith('.tar'):
+            docker_backup_tar = os.path.join(extract_dir, file)
+            break
+    
+    # Extract inner Docker backup if found
+    if docker_backup_tar:
+        print(f"Found inner Docker backup archive: {docker_backup_tar}")
+        docker_extract_dir = os.path.join(extract_dir, "docker_data")
+        os.makedirs(docker_extract_dir, exist_ok=True)
+        
+        with tarfile.open(docker_backup_tar, 'r:*') as tar:
+            tar.extractall(path=docker_extract_dir)
+        
+        # Look for the actual docker backup directory inside
+        for item in os.listdir(docker_extract_dir):
+            item_path = os.path.join(docker_extract_dir, item)
+            if os.path.isdir(item_path) and item.startswith('docker_backup_'):
+                return item_path
+        
+        return docker_extract_dir
+    
     return extract_dir
 
 
