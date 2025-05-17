@@ -6,82 +6,82 @@ import shutil
 from docker_utils.compose_parser import parse_compose_file
 from docker_utils.docker_backup import create_docker_backup
 
-def create_archives(docker_backup_path, current_dir_path=None, additional_files=None):
+def create_archives(docker_backup_path, current_dir=None, additional_files=[], additional_path=None):
     """
-    Create archives for Docker backup and current directory
+    Create archive files for Docker backup and current directory
     
     Args:
         docker_backup_path (str): Path to the Docker backup directory
-        current_dir_path (str, optional): Path to the current directory to include
-        additional_files (list, optional): List of additional files to include
+        current_dir (str, optional): Path to the current directory to include
+        additional_files (list): List of additional files to include
+        additional_path (str, optional): Additional path to include as a separate archive
         
     Returns:
-        str: Path to the created main archive
+        str: Path to the final archive file
     """
-    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    archive_dir = tempfile.mkdtemp(prefix="docker_migration_")
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # Create Docker backup archive - USE NO COMPRESSION FOR SPEED
-    docker_archive = os.path.join(archive_dir, f'docker_backup_{timestamp}.tar')
-    print(f"Creating Docker backup archive: {docker_archive}")
-    print(f"Using no compression for speed. This may still take a few minutes for large images...")
+    # Create a temporary directory to store all archives
+    temp_dir = tempfile.mkdtemp(prefix="docker_migration_")
     
-    # Use 'w:' instead of 'w:gz' for no compression (much faster)
-    with tarfile.open(docker_archive, 'w:') as tar:
+    # Archive Docker backup
+    docker_archive = os.path.join(temp_dir, f"docker_backup_{timestamp}.tar")
+    with tarfile.open(docker_archive, "w") as tar:
         tar.add(docker_backup_path, arcname=os.path.basename(docker_backup_path))
     
-    files_to_archive = [docker_archive]
+    # Archive current directory if specified
+    if current_dir:
+        current_dir_archive = os.path.join(temp_dir, f"current_dir_{timestamp}.tar")
+        with tarfile.open(current_dir_archive, "w") as tar:
+            for item in os.listdir(current_dir):
+                # Skip the Docker backup directory and other common exclusions
+                if item in [os.path.basename(docker_backup_path), '__pycache__', '.git', '.vscode', 'venv', 'env']:
+                    continue
+                    
+                item_path = os.path.join(current_dir, item)
+                tar.add(item_path, arcname=item)
     
-    # Create current directory archive if specified
-    if current_dir_path:
-        current_dir_archive = os.path.join(archive_dir, f'current_dir_{timestamp}.tar')
-        print(f"Creating current directory archive: {current_dir_archive}")
+    # Archive additional path if specified
+    if additional_path:
+        additional_path_archive = os.path.join(temp_dir, f"additional_path_{timestamp}.tar")
+        path_basename = os.path.basename(additional_path)
         
-        with tarfile.open(current_dir_archive, 'w:') as tar:
-            for item in os.listdir(current_dir_path):
-                item_path = os.path.join(current_dir_path, item)
-                # Skip the archive directory and Docker backup directory
-                if item_path != archive_dir and item_path != docker_backup_path:
-                    tar.add(item_path, arcname=os.path.basename(item_path))
+        with tarfile.open(additional_path_archive, "w") as tar:
+            # Add the entire folder structure
+            tar.add(additional_path, arcname=path_basename)
         
-        files_to_archive.append(current_dir_archive)
-    
-    # Add additional files if specified
-    if additional_files and len(additional_files) > 0:
-        additional_files_archive = os.path.join(archive_dir, f'additional_files_{timestamp}.tar')
-        print(f"Creating additional files archive: {additional_files_archive}")
+        print(f"Additional path archived: {additional_path} -> {additional_path_archive}")
         
-        with tarfile.open(additional_files_archive, 'w:') as tar:
+    # Archive additional files if any
+    if additional_files:
+        add_files_archive = os.path.join(temp_dir, f"additional_files_{timestamp}.tar")
+        with tarfile.open(add_files_archive, "w") as tar:
             for file_path in additional_files:
                 if os.path.exists(file_path):
                     tar.add(file_path, arcname=os.path.basename(file_path))
-        
-        files_to_archive.append(additional_files_archive)
     
-    # Create main archive containing all archives - LIGHT COMPRESSION
-    main_archive = os.path.join(os.getcwd(), f'docker_migration_{timestamp}.tar')
-    print(f"Creating main archive: {main_archive}")
+    # Create README
+    readme_path = os.path.join(temp_dir, "README.txt")
+    with open(readme_path, "w") as f:
+        f.write("Docker Migration Backup\n")
+        f.write("======================\n\n")
+        f.write(f"Created on: {datetime.datetime.now()}\n\n")
+        f.write("This archive contains Docker backup data and application files.\n")
+        f.write("To restore, use the Docker Migration tool with --mode restore option.\n")
     
-    with tarfile.open(main_archive, 'w:') as tar:
-        for file_path in files_to_archive:
-            tar.add(file_path, arcname=os.path.basename(file_path))
-        
-        # Add a README file
-        readme_path = os.path.join(archive_dir, 'README.txt')
-        with open(readme_path, 'w') as f:
-            f.write("Docker Migration Archive\n")
-            f.write("======================\n\n")
-            f.write(f"Created: {datetime.datetime.now()}\n\n")
-            f.write("Contents:\n")
-            for file_path in files_to_archive:
-                f.write(f"- {os.path.basename(file_path)}\n")
-        
-        tar.add(readme_path, arcname=os.path.basename(readme_path))
+    # Create final archive containing all the above archives
+    final_archive = f"docker_migration_{timestamp}.tar"
+    with tarfile.open(final_archive, "w") as tar:
+        for item in os.listdir(temp_dir):
+            item_path = os.path.join(temp_dir, item)
+            tar.add(item_path, arcname=item)
     
-    # Cleanup temporary archives
-    shutil.rmtree(archive_dir)
+    # Clean up temporary files
+    shutil.rmtree(temp_dir)
+    shutil.rmtree(docker_backup_path)
     
-    return main_archive
+    print(f"Created archive: {final_archive}")
+    return final_archive
 
 def prepare_docker_data(compose_file):
     docker_data = parse_compose_file(compose_file)

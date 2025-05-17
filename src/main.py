@@ -29,18 +29,30 @@ def main():
     parser.add_argument('--target-dir', default='.',
                       help='Directory to extract application files to (for extract-only mode)')
     
+    # Add backup-all argument
+    parser.add_argument('--backup-all', action='store_true',
+                      help='Backup all Docker resources on the server, not just those in docker-compose.yml')
+    
+    # Add additional-path argument
+    parser.add_argument('--additional-path', 
+                      help='Additional path to include in backup as a separate archive')
+    
     args = parser.parse_args()
     
     compose_file = 'docker-compose.yml'
     
     if args.mode == 'backup':
-        if os.path.exists(compose_file):
+        if os.path.exists(compose_file) and not args.backup_all:
             print(f"Found {compose_file}. Backing up resources defined in the compose file...")
             images, containers, networks, additional_files = parse_compose_file(compose_file)
             docker_backup_path = backup_docker_data(images, containers, networks)
             include_current_dir = True
         else:
-            print(f"No {compose_file} found. Backing up all running Docker entities...")
+            if args.backup_all:
+                print("Backing up all Docker resources on the server...")
+            else:
+                print(f"No {compose_file} found. Backing up all running Docker entities...")
+            
             docker_backup_path, images, containers, networks = backup_all_docker_data()
             additional_files = []
             
@@ -49,13 +61,23 @@ def main():
             else:
                 include_dir = input("Do you want to include the current directory in the backup? (yes/no): ")
                 include_current_dir = include_dir.lower() == 'yes'
+        
+        # Handle additional path
+        additional_path = None
+        if args.additional_path:
+            if os.path.exists(args.additional_path):
+                print(f"Including additional path in backup: {args.additional_path}")
+                additional_path = os.path.abspath(args.additional_path)
+            else:
+                print(f"Warning: Additional path does not exist: {args.additional_path}")
 
         # Create archives
         current_directory = os.getcwd()
         archive_path = create_archives(
             docker_backup_path, 
-            current_directory if include_current_dir else None, 
-            additional_files
+            current_directory if include_current_dir else None,
+            additional_files,
+            additional_path
         )
 
         # Handle file transfer
@@ -105,8 +127,18 @@ def main():
                 file_path = os.path.join(temp_dir, file)
                 if file.endswith('.tar') and tarfile.is_tarfile(file_path):
                     print(f"Extracting inner archive: {file}")
-                    with tarfile.open(file_path, 'r:*') as tar:
-                        tar.extractall(path=extract_dir)
+                    
+                    # For additional_path archive, extract to a specific folder
+                    if file.startswith("additional_path_"):
+                        additional_extract_dir = os.path.join(extract_dir, "additional_path")
+                        os.makedirs(additional_extract_dir, exist_ok=True)
+                        with tarfile.open(file_path, 'r:*') as tar:
+                            tar.extractall(path=additional_extract_dir)
+                        print(f"Additional path files extracted to: {additional_extract_dir}")
+                    else:
+                        # Normal extraction for other archives
+                        with tarfile.open(file_path, 'r:*') as tar:
+                            tar.extractall(path=extract_dir)
             
             print(f"All files extracted to {extract_dir}")
             shutil.rmtree(temp_dir)
