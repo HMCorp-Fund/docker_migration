@@ -45,10 +45,22 @@ def backup_docker_data(images, containers, networks):
     
     # Save container details
     containers_json = []
+    existing_containers = []
+    
+    # First check which containers actually exist
     for container_id in containers:
         container_info = run_command(f"docker inspect {container_id}")
         if container_info:
-            containers_json.append(json.loads(container_info)[0])
+            try:
+                containers_json.append(json.loads(container_info)[0])
+                existing_containers.append(container_id)
+            except json.JSONDecodeError:
+                print(f"Warning: Could not parse JSON for container {container_id}")
+        else:
+            print(f"Warning: Container {container_id} not found, it will be skipped")
+    
+    # Update the containers list to only include existing containers
+    containers = existing_containers
     
     with open(os.path.join(backup_dir, 'containers.json'), 'w') as f:
         json.dump(containers_json, f, indent=2)
@@ -62,14 +74,32 @@ def backup_docker_data(images, containers, networks):
         # Fix permissions on the saved image file - make sure we use sudo too
         run_command(f"chmod 644 '{image_filename}'", capture_output=False, use_sudo=True)
     
-    # Save networks
+    # Save networks - add same error handling as containers
+    existing_networks = []
+    networks_json = []
+    
     os.makedirs(os.path.join(backup_dir, 'networks'), exist_ok=True)
     for network_name in networks:
         network_info = run_command(f"docker network inspect {network_name}")
         if network_info:
-            network_filename = os.path.join(backup_dir, 'networks', network_name + '.json')
-            with open(network_filename, 'w') as f:
-                f.write(network_info)
+            try:
+                network_data = json.loads(network_info)
+                networks_json.extend(network_data)
+                existing_networks.append(network_name)
+                
+                # Save the network configuration
+                network_filename = os.path.join(backup_dir, 'networks', network_name + '.json')
+                with open(network_filename, 'w') as f:
+                    f.write(network_info)
+                    
+                print(f"Saved network configuration for: {network_name}")
+            except json.JSONDecodeError:
+                print(f"Warning: Could not parse JSON for network {network_name}")
+        else:
+            print(f"Warning: Network {network_name} not found, it will be skipped")
+    
+    # Update networks list to only include existing ones
+    networks = existing_networks
     
     # Create a manifest file with metadata
     with open(os.path.join(backup_dir, 'manifest.json'), 'w') as f:

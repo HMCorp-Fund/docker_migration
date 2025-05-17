@@ -47,9 +47,6 @@ def main():
             transfer_files(archive_path, destination)
 
         print("Please extract the archives on the new server and run the installation script.")
-        
-        # Check if Docker services are running properly
-        check_docker_services()
     
     elif args.mode == 'restore':
         if not args.backup_file:
