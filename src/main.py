@@ -56,12 +56,18 @@ def main():
             docker_backup_path, images, containers, networks = backup_all_docker_data()
             additional_files = []
             
-            if args.no_prompt:
-                include_current_dir = False
-            else:
-                include_dir = input("Do you want to include the current directory in the backup? (yes/no): ")
-                include_current_dir = include_dir.lower() == 'yes'
-        
+        # Handle current directory inclusion
+        include_current_dir = False
+
+        if args.additional_path:
+            # When additional path is provided, don't automatically include current dir
+            print(f"Using specified path {args.additional_path} for application files")
+            include_current_dir = False
+        elif not args.no_prompt:
+            # Only prompt when no additional path AND prompts aren't disabled
+            include_dir = input("Do you want to include the current directory in the backup? (yes/no): ")
+            include_current_dir = include_dir.lower() == 'yes'
+
         # Handle additional path
         additional_path = None
         if args.additional_path:
