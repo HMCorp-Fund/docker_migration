@@ -6,15 +6,15 @@ import shutil
 from docker_utils.compose_parser import parse_compose_file
 from docker_utils.docker_backup import create_docker_backup
 
-def create_archives(docker_backup_path, current_dir=None, additional_files=[], additional_path=None):
+def create_archives(docker_backup_path, current_dir=None, additional_files=[], docker_src_base_dir=None):
     """
-    Create archive files for Docker backup and current directory
+    Create archive files for Docker backup and application directories
     
     Args:
         docker_backup_path (str): Path to the Docker backup directory
         current_dir (str, optional): Path to the current directory to include
         additional_files (list): List of additional files to include
-        additional_path (str, optional): Additional path to include as a separate archive
+        docker_src_base_dir (str, optional): Docker source base directory to include as a separate archive
         
     Returns:
         str: Path to the final archive file
@@ -41,17 +41,17 @@ def create_archives(docker_backup_path, current_dir=None, additional_files=[], a
                 item_path = os.path.join(current_dir, item)
                 tar.add(item_path, arcname=item)
     
-    # Archive additional path if specified
-    if additional_path:
-        additional_path_archive = os.path.join(temp_dir, f"additional_path_{timestamp}.tar")
-        path_basename = os.path.basename(additional_path)
+    # Archive Docker source base directory if specified
+    if docker_src_base_dir:
+        docker_src_archive = os.path.join(temp_dir, f"docker_src_base_dir_{timestamp}.tar")
+        path_basename = os.path.basename(docker_src_base_dir)
         
-        with tarfile.open(additional_path_archive, "w") as tar:
+        with tarfile.open(docker_src_archive, "w") as tar:
             # Add the entire folder structure
-            tar.add(additional_path, arcname=path_basename)
+            tar.add(docker_src_base_dir, arcname=path_basename)
         
-        print(f"Additional path archived: {additional_path} -> {additional_path_archive}")
-        
+        print(f"Docker source base directory archived: {docker_src_base_dir} -> {docker_src_archive}")
+    
     # Archive additional files if any
     if additional_files:
         add_files_archive = os.path.join(temp_dir, f"additional_files_{timestamp}.tar")

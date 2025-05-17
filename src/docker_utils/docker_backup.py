@@ -518,32 +518,74 @@ def restore_networks(backup_dir):
 
 
 def restore_application_files(backup_file, target_dir):
-    """Extract application files from backup to target directory"""
+    """
+    Extract application files from backup to target directory
+    
+    Args:
+        backup_file (str): Path to the backup file
+        target_dir (str): Directory to extract to
+    
+    Returns:
+        bool: True if files were extracted successfully
+    """
     temp_dir = tempfile.mkdtemp(prefix="docker_extract_")
+    success = False
     
     try:
         # Extract main archive
         with tarfile.open(backup_file, 'r:*') as tar:
             tar.extractall(path=temp_dir)
         
-        # Find and extract current_dir archive
-        current_dir_tar = None
-        for file in os.listdir(temp_dir):
-            if file.startswith('current_dir_') and file.endswith('.tar'):
-                current_dir_tar = os.path.join(temp_dir, file)
-                break
+        # Find archives
+        archive_files = find_backup_archives(temp_dir)
         
-        if current_dir_tar:
-            print(f"Found application files archive: {current_dir_tar}")
-            print(f"Extracting application files to: {target_dir}")
-            with tarfile.open(current_dir_tar, 'r:*') as tar:
-                tar.extractall(path=target_dir)
-            print("Application files successfully extracted")
+        # Extract current directory files
+        if archive_files['current_dir']:
+            success = extract_archive(archive_files['current_dir'], target_dir, "application files")
         else:
             print("No application files archive found in backup")
+        
+        # Extract docker source base directory
+        if archive_files['docker_src_base_dir']:
+            docker_src_dir = os.path.join(target_dir, "docker_src_base_dir")
+            os.makedirs(docker_src_dir, exist_ok=True)
+            success = extract_archive(archive_files['docker_src_base_dir'], docker_src_dir,  
+                                    "Docker source base directory") or success
+        
     finally:
         # Clean up temp directory
         shutil.rmtree(temp_dir)
+    
+    return success
+
+def find_backup_archives(temp_dir):
+    """Find different backup archives in the temp directory"""
+    archives = {
+        'current_dir': None,
+        'docker_src_base_dir': None
+    }
+    
+    for file in os.listdir(temp_dir):
+        if file.startswith('current_dir_') and file.endswith('.tar'):
+            archives['current_dir'] = os.path.join(temp_dir, file)
+        elif file.startswith('additional_path_') and file.endswith('.tar'):
+            # Legacy support for old archive name
+            archives['docker_src_base_dir'] = os.path.join(temp_dir, file)
+        elif file.startswith('docker_src_base_dir_') and file.endswith('.tar'):
+            archives['docker_src_base_dir'] = os.path.join(temp_dir, file)
+    
+    return archives
+
+def extract_archive(archive_path, target_dir, description):
+    """Extract an archive file to target directory"""
+    print(f"Found {description} archive: {os.path.basename(archive_path)}")
+    print(f"Extracting {description} to: {target_dir}")
+    
+    with tarfile.open(archive_path, 'r:*') as tar:
+        tar.extractall(path=target_dir)
+    
+    print(f"{description.capitalize()} successfully extracted")
+    return True
 
 
 def restore_containers(backup_dir, networks, volumes):
@@ -648,72 +690,25 @@ def restore_containers(backup_dir, networks, volumes):
 def restore_docker_backup(backup_file, extract_dir=None, compose_file_path=None):
     """
     Restore a Docker backup with proper Docker Compose integration
-    
-    Args:
-        backup_file (str): Path to the backup file
-        extract_dir (str, optional): Directory to extract to
-        compose_file_path (str, optional): Path to docker-compose.yml file
-        
-    Returns:
-        tuple: (restored_images, restored_networks, restored_containers)
     """
     print(f"Starting Docker restoration from {backup_file}")
     
     # Extract the backup
     backup_dir = extract_backup(backup_file, extract_dir)
     
-    # First, extract application files (docker-compose.yml and related files)
+    # Extract application files 
     current_dir = os.getcwd()
-    app_files_extracted = extract_application_files(backup_file, current_dir)
+    app_files_extracted = restore_application_files(backup_file, current_dir)
     
-    # Restore images only - they don't have Compose-specific labels
+    # Restore images - they don't have Compose-specific labels
     restored_images = restore_images(backup_dir)
     
-    # Default return values
-    restored_networks = []
-    restored_containers = []
+    # Find the compose file to use
+    compose_file = find_compose_file(compose_file_path, current_dir)
     
-    # Use provided compose file path if available, otherwise look in default locations
-    compose_file = None
-    if compose_file_path:
-        if os.path.exists(compose_file_path):
-            compose_file = compose_file_path
-            print(f"Using specified docker-compose.yml at: {compose_file_path}")
-        else:
-            print(f"Warning: Specified docker-compose.yml not found at {compose_file_path}")
-    
-    # Fall back to default locations if no compose file specified or found
-    if not compose_file:
-        default_compose_file = os.path.join(current_dir, 'docker-compose.yml')
-        default_compose_yaml_file = os.path.join(current_dir, 'docker-compose.yaml')
-        
-        if os.path.exists(default_compose_file):
-            compose_file = default_compose_file
-        elif os.path.exists(default_compose_yaml_file):
-            compose_file = default_compose_yaml_file
-    
+    # Restore using compose or direct method
     if compose_file:
-        print(f"Found docker-compose file: {compose_file}")
-        
-        try:
-            # Use Docker Compose to create networks and containers with proper labels
-            compose_cmd = f"docker compose -f {compose_file} up -d"
-            result = run_command(compose_cmd, capture_output=False)
-            
-            # Get the list of containers created by Docker Compose
-            containers_str = run_command(f"docker compose -f {compose_file} ps -q")
-            restored_containers = containers_str.split() if containers_str else []
-            
-            # Get the list of networks created by Docker Compose
-            networks_str = run_command("docker network ls --filter 'label=com.docker.compose.project' --format '{{.Name}}'")
-            restored_networks = networks_str.split() if networks_str else []
-            
-        except Exception as e:
-            print(f"Error using Docker Compose: {e}")
-            print("Falling back to direct restoration method")
-            restored_networks = restore_networks(backup_dir)
-            restored_volumes = restore_volumes(backup_dir)
-            restored_containers = restore_containers(backup_dir, restored_networks, restored_volumes)
+        restored_networks, restored_containers = restore_with_compose(compose_file, backup_dir)
     else:
         print("\nWarning: No docker-compose.yml found after extraction.")
         print("Falling back to direct restoration, but Docker Compose commands won't work properly.")
@@ -726,63 +721,60 @@ def restore_docker_backup(backup_file, extract_dir=None, compose_file_path=None)
     print(f"\nDocker restoration complete!")
     print(f"Restored {len(restored_images)} images, {len(restored_networks)} networks, and {len(restored_containers)} containers")
     
-    # Always return a tuple
     return (restored_images, restored_networks, restored_containers)
 
 
-def extract_application_files(backup_file, target_dir):
-    """Extract application files from backup to target directory
+def find_compose_file(compose_file_path, current_dir):
+    """Find the docker-compose file to use for restoration"""
+    # Use provided compose file path if available
+    if compose_file_path and os.path.exists(compose_file_path):
+        print(f"Using specified docker-compose.yml at: {compose_file_path}")
+        return compose_file_path
+    elif compose_file_path:
+        print(f"Warning: Specified docker-compose.yml not found at {compose_file_path}")
     
-    Returns:
-        bool: True if files were extracted successfully
-    """
-    temp_dir = tempfile.mkdtemp(prefix="docker_extract_")
-    success = False
+    # Check default locations
+    default_compose_file = os.path.join(current_dir, 'docker-compose.yml')
+    default_compose_yaml_file = os.path.join(current_dir, 'docker-compose.yaml')
+    
+    if os.path.exists(default_compose_file):
+        print(f"Found docker-compose.yml in current directory")
+        return default_compose_file
+    elif os.path.exists(default_compose_yaml_file):
+        print(f"Found docker-compose.yaml in current directory")
+        return default_compose_yaml_file
+    
+    return None
+
+
+def restore_with_compose(compose_file, backup_dir):
+    """Restore Docker resources using docker-compose"""
+    print(f"Found docker-compose file: {compose_file}")
     
     try:
-        # Extract main archive
-        with tarfile.open(backup_file, 'r:*') as tar:
-            tar.extractall(path=temp_dir)
+        # Use Docker Compose to create networks and containers with proper labels
+        compose_cmd = f"docker compose -f {compose_file} up -d"
+        run_command(compose_cmd, capture_output=False)
         
-        # Find both current_dir and additional_path archives
-        current_dir_tar = None
-        additional_path_tar = None
+        # Get the list of containers created by Docker Compose
+        containers_str = run_command(f"docker compose -f {compose_file} ps -q")
+        restored_containers = containers_str.split() if containers_str else []
         
-        for file in os.listdir(temp_dir):
-            if file.startswith('current_dir_') and file.endswith('.tar'):
-                current_dir_tar = os.path.join(temp_dir, file)
-            elif file.startswith('additional_path_') and file.endswith('.tar'):
-                additional_path_tar = os.path.join(temp_dir, file)
+        # Get the list of networks created by Docker Compose
+        networks_str = run_command("docker network ls --filter 'label=com.docker.compose.project' --format '{{.Name}}'")
+        restored_networks = networks_str.split() if networks_str else []
         
-        # Extract current_dir archive to target directory
-        if current_dir_tar:
-            print(f"Found application files archive: {current_dir_tar}")
-            print(f"Extracting application files to: {target_dir}")
-            with tarfile.open(current_dir_tar, 'r:*') as tar:
-                tar.extractall(path=target_dir)
-            print("Application files successfully extracted")
-            success = True
-        else:
-            print("No application files archive found in backup")
+        return restored_networks, restored_containers
+    except Exception as e:
+        print(f"Error using Docker Compose: {e}")
+        print("Falling back to direct restoration method")
         
-        # Extract additional_path archive to additional_path subdirectory
-        if additional_path_tar:
-            print(f"Found additional path archive: {additional_path_tar}")
-            additional_extract_dir = os.path.join(target_dir, "additional_path")
-            os.makedirs(additional_extract_dir, exist_ok=True)
-            
-            print(f"Extracting additional path files to: {additional_extract_dir}")
-            with tarfile.open(additional_path_tar, 'r:*') as tar:
-                tar.extractall(path=additional_extract_dir)
-            
-            print(f"Additional path files extracted to: {additional_extract_dir}")
-            success = True
+        # Fall back to direct restoration
+        restored_networks = restore_networks(backup_dir)
+        restored_volumes = restore_volumes(backup_dir)
+        restored_containers = restore_containers(backup_dir, restored_networks, restored_volumes)
         
-    finally:
-        # Clean up temp directory
-        shutil.rmtree(temp_dir)
-    
-    return success
+        return restored_networks, restored_containers
 
 
 def main():

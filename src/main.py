@@ -33,9 +33,12 @@ def main():
     parser.add_argument('--backup-all', action='store_true',
                       help='Backup all Docker resources on the server, not just those in docker-compose.yml')
     
-    # Add additional-path argument
-    parser.add_argument('--additional-path', 
-                      help='Additional path to include in backup as a separate archive')
+    # Replace the additional-path argument with docker-src-base-dir
+    parser.add_argument('--docker-src-base-dir', 
+                      help='Docker source base directory to include in backup as a separate archive')
+    # Legacy support for old parameter name
+    parser.add_argument('--additional-path', dest='docker_src_base_dir',
+                      help='DEPRECATED: Use --docker-src-base-dir instead')
     
     # Add a new argument in main.py
     parser.add_argument('--compose-file-path', 
@@ -63,23 +66,24 @@ def main():
         # Handle current directory inclusion
         include_current_dir = False
 
-        if args.additional_path:
-            # When additional path is provided, don't automatically include current dir
-            print(f"Using specified path {args.additional_path} for application files")
+        # Update variable references in main.py
+        if args.docker_src_base_dir:
+            # When docker source base directory is provided, don't automatically include current dir
+            print(f"Using specified path {args.docker_src_base_dir} for Docker source files")
             include_current_dir = False
         elif not args.no_prompt:
-            # Only prompt when no additional path AND prompts aren't disabled
+            # Only prompt when no docker source directory AND prompts aren't disabled
             include_dir = input("Do you want to include the current directory in the backup? (yes/no): ")
             include_current_dir = include_dir.lower() == 'yes'
 
-        # Handle additional path
-        additional_path = None
-        if args.additional_path:
-            if os.path.exists(args.additional_path):
-                print(f"Including additional path in backup: {args.additional_path}")
-                additional_path = os.path.abspath(args.additional_path)
+        # Handle docker source base directory
+        docker_src_base_dir = None
+        if args.docker_src_base_dir:
+            if os.path.exists(args.docker_src_base_dir):
+                print(f"Including Docker source base directory in backup: {args.docker_src_base_dir}")
+                docker_src_base_dir = os.path.abspath(args.docker_src_base_dir)
             else:
-                print(f"Warning: Additional path does not exist: {args.additional_path}")
+                print(f"Warning: Docker source base directory does not exist: {args.docker_src_base_dir}")
 
         # Create archives
         current_directory = os.getcwd()
@@ -87,7 +91,7 @@ def main():
             docker_backup_path, 
             current_directory if include_current_dir else None,
             additional_files,
-            additional_path
+            docker_src_base_dir
         )
 
         # Handle file transfer
@@ -145,10 +149,14 @@ def main():
                         with tarfile.open(file_path, 'r:*') as tar:
                             tar.extractall(path=additional_extract_dir)
                         print(f"Additional path files extracted to: {additional_extract_dir}")
-                    else:
-                        # Normal extraction for other archives
+                    
+                    # For Docker source base directory archive, extract to a specific folder  
+                    if file.startswith("additional_path_") or file.startswith("docker_src_base_dir_"):
+                        docker_src_extract_dir = os.path.join(extract_dir, "docker_src_base_dir")
+                        os.makedirs(docker_src_extract_dir, exist_ok=True)
                         with tarfile.open(file_path, 'r:*') as tar:
-                            tar.extractall(path=extract_dir)
+                            tar.extractall(path=docker_src_extract_dir)
+                        print(f"Docker source base directory files extracted to: {docker_src_extract_dir}")
             
             print(f"All files extracted to {extract_dir}")
             shutil.rmtree(temp_dir)
@@ -162,6 +170,14 @@ def main():
                 potential_compose_file = os.path.join("additional_path", "docker-compose.yml")
                 if os.path.exists(potential_compose_file):
                     print(f"Found docker-compose.yml in additional_path: {potential_compose_file}")
+                    compose_file_path = potential_compose_file
+            
+            # If no compose file is specified but we extracted a Docker source base directory,
+            # automatically check for docker-compose.yml in that directory
+            if not compose_file_path and os.path.exists("docker_src_base_dir"):
+                potential_compose_file = os.path.join("docker_src_base_dir", "docker-compose.yml")
+                if os.path.exists(potential_compose_file):
+                    print(f"Found docker-compose.yml in Docker source base directory: {potential_compose_file}")
                     compose_file_path = potential_compose_file
             
             restored_images, restored_networks, restored_containers = restore_docker_backup(
