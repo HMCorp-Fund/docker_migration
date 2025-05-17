@@ -30,9 +30,22 @@ def parse_compose_file(compose_file):
                 if isinstance(service, dict) and 'image' in service:
                     images.append(service['image'])
                     
-                    # Add container name if specified
-                    container_name = service.get('container_name', f"{os.path.basename(os.path.dirname(compose_file))}-{service_name}")
-                    containers.append(container_name)
+                    # Add container name, considering multiple naming patterns
+                    if 'container_name' in service:
+                        # Explicit container name
+                        containers.append(service['container_name'])
+                    else:
+                        # Try Docker Compose default naming patterns
+                        project_name = os.path.basename(os.path.dirname(os.path.abspath(compose_file)))
+                        
+                        # Standard Docker Compose pattern (project_service)
+                        containers.append(f"{project_name}_{service_name}")
+                        
+                        # Alternative pattern with hyphens (project-service-1)
+                        containers.append(f"{project_name}-{service_name}")
+                        
+                        # Just the service name (for flexibility)
+                        containers.append(service_name)
         else:
             print(f"Warning: No services found in docker-compose.yml")
         
