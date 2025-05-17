@@ -281,21 +281,33 @@ def extract_backup(backup_file, extract_dir=None):
     else:
         raise ValueError(f"File {backup_file} is not a valid tar archive")
     
-    # Find the docker_backup directory
-    backup_dir = None
-    for root, dirs, files in os.walk(extract_dir):
-        for d in dirs:
-            if d.startswith('docker_backup_'):
-                backup_dir = os.path.join(root, d)
-                break
-        if backup_dir:
+    # Look for inner Docker backup archive
+    docker_backup_tar = None
+    for file in os.listdir(extract_dir):
+        if file.startswith('docker_backup_') and file.endswith('.tar'):
+            docker_backup_tar = os.path.join(extract_dir, file)
             break
-            
-    if not backup_dir:
-        print(f"Warning: Could not find docker_backup_ directory in the archive")
-        backup_dir = extract_dir
     
-    return backup_dir
+    if docker_backup_tar:
+        print(f"Found inner Docker backup archive: {docker_backup_tar}")
+        # Extract the inner Docker backup archive
+        docker_extract_dir = os.path.join(extract_dir, "docker_data")
+        os.makedirs(docker_extract_dir, exist_ok=True)
+        
+        with tarfile.open(docker_backup_tar, 'r:*') as tar:
+            tar.extractall(path=docker_extract_dir)
+            
+        # Find the docker_backup_ directory inside the extracted content
+        for item in os.listdir(docker_extract_dir):
+            item_path = os.path.join(docker_extract_dir, item)
+            if os.path.isdir(item_path) and item.startswith('docker_backup_'):
+                return item_path
+    
+        # If we couldn't find a docker_backup_ directory, return the extraction directory
+        return docker_extract_dir
+    else:
+        print(f"Warning: Could not find docker_backup_*.tar file in the archive")
+        return extract_dir
 
 
 def restore_images(backup_dir):
