@@ -52,13 +52,54 @@ docker-migration-tool
 
 ## Usage
 
+### Basic Usage
+
 1. Navigate to the directory containing your Docker Compose file.
 2. Run the migration tool:
    ```
    python src/main.py
    ```
+3. Follow the prompts to complete the migration process.
 
-Follow the prompts to complete the migration process.
+### Advanced Options
+
+#### Backup Mode
+```
+python src/main.py --mode backup [options]
+```
+
+Options:
+- `--backup-all`: Backup all Docker resources on the server instead of just those in docker-compose.yml
+- `--docker-src-base-dir PATH`: Include a specific directory containing Docker source files in the backup
+- `--skip-images`: Skip backing up Docker images (which can be large)
+- `--skip-containers`: Skip backing up Docker containers
+- `--config-only`: Only backup configurations (equivalent to using both --skip-images and --skip-containers)
+- `--pull-images`: Pull Docker images defined in docker-compose.yml before backup
+- `--transfer`: Transfer the backup to another location
+- `--destination PATH`: Specify destination path (local path, user@host:/path for SCP, or ftp://user:pass@host/path for FTP)
+- `--ftp-user USERNAME`: FTP username (if not specified in destination)
+- `--ftp-pass PASSWORD`: FTP password (if not specified in destination)
+- `--no-prompt`: Do not prompt for user input (useful for scripted operations)
+
+#### Restore Mode
+```
+python src/main.py --mode restore --backup-file PATH [options]
+```
+
+Options:
+- `--backup-file PATH`: Path to backup file (required for restore mode)
+- `--compose-file-path PATH`: Path to docker-compose.yml file for restoration
+- `--extract-only`: Extract files without restoring Docker components
+- `--target-dir PATH`: Directory to extract application files to (for extract-only mode)
+
+## Use Cases
+
+1. **Server Migration**: Migrate a complete Docker environment from one server to another.
+2. **Environment Backup**: Create a backup of your Docker environment before making significant changes.
+3. **Disaster Recovery**: Restore Docker services quickly after a system failure.
+4. **Dev/Test Cloning**: Clone a production environment to development or testing servers.
+5. **Configuration Extraction**: Extract only configuration files without the Docker images for lightweight backups.
+6. **Selective Migration**: Migrate specific components of your Docker environment by using skip options.
 
 ## Contributing
 
