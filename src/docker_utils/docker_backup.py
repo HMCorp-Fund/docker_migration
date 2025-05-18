@@ -155,58 +155,72 @@ def backup_docker_data(images=None, containers=None, networks=None, volumes=None
         
         print(f"Successfully backed up {len(backed_up_images)} of {len(images)} images")
     
-    # Backup container configurations with more flexible matching
-    backed_up_containers = []
+    # Backup container configurations with improved suffix matching
     if containers:
-        print(f"Attempting to back up {len(containers)} containers from compose file")
+        # Get all containers including stopped ones
+        all_containers_raw = run_command("docker ps -a --format '{{.Names}}'")
+        all_containers = all_containers_raw.splitlines() if all_containers_raw else []
+        print(f"Found {len(all_containers)} Docker containers on the system (including stopped)")
+        
+        # Debug output all container names
+        print(f"Available containers: {', '.join(all_containers)}")
         
         for container in containers:
-            # Define possible container naming patterns
-            container_patterns = [
-                container,                          # Exact name
-                f"{project_dir}_{container}",       # project_container  
-                f"{project_dir}-{container}",       # project-container
-                f"{container.replace('-', '_')}"    # container with _ instead of -
+            print(f"Looking for container: {container}")
+            matched = False
+            
+            # Create patterns to match, including with "-1" suffix
+            patterns = [
+                container,                    # exact match
+                f"{container}-1",             # with -1 suffix (common Docker Compose pattern)
+                f"{project_dir}_{container}", # project_container 
+                f"{project_dir}_{container}-1", # project_container-1
+                f"{project_dir}-{container}", # project-container
+                f"{project_dir}-{container}-1" # project-container-1
             ]
             
-            # Find any matching container
-            matched_container = None
-            for pattern in container_patterns:
-                for actual_container in all_containers:
-                    if actual_container == pattern or actual_container.endswith(f"-{pattern}"):
-                        matched_container = actual_container
-                        break
-                if matched_container:
-                    break
-            
-            if matched_container:
-                print(f"Found container: {matched_container}")
-                try:
-                    container_file = os.path.join(containers_dir, matched_container + '.json')
-                    config = run_command(f"docker inspect {matched_container}")
-                    
-                    if config:
-                        with open(container_file, 'w') as f:
-                            f.write(config)
-                        backed_up_containers.append(matched_container)
+            # Try each pattern
+            for pattern in patterns:
+                if pattern in all_containers:
+                    print(f"Found container: {pattern}")
+                    try:
+                        container_file = os.path.join(containers_dir, pattern + '.json')
+                        config = run_command(f"docker inspect {pattern}")
                         
-                        # Try to also get the container's image if not already backed up
-                        container_image = run_command(f"docker inspect --format='{{{{.Config.Image}}}}' {matched_container}")
-                        if container_image and container_image not in backed_up_images:
-                            print(f"Found container image: {container_image}")
-                            try:
-                                image_file = os.path.join(images_dir, container_image.replace('/', '_').replace(':', '_') + '.tar')
-                                run_command(f"docker save {container_image} -o '{image_file}'")
-                                backed_up_images.append(container_image)
-                            except Exception as e:
-                                print(f"Error saving container image {container_image}: {e}")
-                except Exception as e:
-                    print(f"Error backing up container {matched_container}: {e}")
-            else:
+                        if config:
+                            with open(container_file, 'w') as f:
+                                f.write(config)
+                            print(f"Successfully backed up container: {pattern}")
+                            matched = True
+                            break
+                    except Exception as e:
+                        print(f"Error backing up container {pattern}: {e}")
+            
+            # If still not found, try partial matching (looking for containers that end with our name + suffix)
+            if not matched:
+                for actual_container in all_containers:
+                    # Check for names that end with our container name + numeric suffix
+                    if (actual_container.endswith(f"-{container}-1") or 
+                        actual_container.endswith(f"_{container}-1") or
+                        actual_container.endswith(f"-{container}")):
+                        
+                        print(f"Found container with suffix: {actual_container}")
+                        try:
+                            container_file = os.path.join(containers_dir, actual_container + '.json')
+                            config = run_command(f"docker inspect {actual_container}")
+                            
+                            if config:
+                                with open(container_file, 'w') as f:
+                                    f.write(config)
+                                print(f"Successfully backed up container: {actual_container}")
+                                matched = True
+                                break
+                        except Exception as e:
+                            print(f"Error backing up container {actual_container}: {e}")
+                
+            if not matched:
                 print(f"Container {container} not found with any naming pattern")
-        
-        print(f"Successfully backed up {len(backed_up_containers)} of {len(containers)} containers")
-
+                
     # Network and volume backup code would follow here...
     
     return backup_dir
