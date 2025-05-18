@@ -9,8 +9,7 @@ setup(
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     url="https://github.com/HMCorp-Fund/docker_migration",
-    packages=find_packages(where="docker_migration"),
-    package_dir={"": "docker_migration"},
+    packages=find_packages(),  # Changed - find packages in the current directory
     python_requires=">=3.6",
     install_requires=[
         "docker",
