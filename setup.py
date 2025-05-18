@@ -8,19 +8,15 @@ setup(
     description="A tool for migrating Docker applications between servers",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/HMCorp-Fund/docker-migration",
-    packages=find_packages(),
-    classifiers=[
-        "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
-        "Operating System :: OS Independent",
-    ],
+    url="https://github.com/yourusername/docker_migration",
+    packages=find_packages(where="src"),
+    package_dir={"": "src"},
     python_requires=">=3.6",
     install_requires=[
         "docker",
         "requests",
         "paramiko",
-        "pyyaml>=6.0",
+        "pyyaml>=6.0.1",
         "zipfile36",
     ],
     entry_points={
