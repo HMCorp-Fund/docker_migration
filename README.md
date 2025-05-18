@@ -1,6 +1,10 @@
 # Docker Migration Tool
 
-This project provides a comprehensive solution for migrating Docker environments using Docker Compose. It automates the process of preparing Docker data, creating archives, transferring files to a new server, and reinstalling Docker on the new server.
+## The Problem
+
+Migrating Docker environments between servers can be challenging and error-prone. It involves multiple steps including backing up Docker data, transferring configurations, reinstalling services, and ensuring everything works correctly on the new server. This process is often manual, time-consuming, and requires specialized knowledge.
+
+This tool solves this problem by automating the entire Docker migration workflow, reducing downtime, minimizing human error, and making migrations accessible even to those with limited Docker expertise.
 
 ## Features
 
@@ -39,15 +43,21 @@ docker-migration-tool
 
 ## Installation
 
-1. Clone the repository:
-   ```
-   git clone <repository-url>
-   cd docker-migration-tool
-   ```
+### Via pip
 
-2. Install the required dependencies:
+The simplest way to install the Docker Migration Tool is via pip:
+
+```
+pip install docker-migration
+```
+
+This will install the tool and all its dependencies. After installation, you can use the `docker-migration` command from anywhere.
+
+### From Source
+
+Install the package:
    ```
-   pip install -r requirements.txt
+   pip install docker-migration
    ```
 
 ## Usage
@@ -57,6 +67,11 @@ docker-migration-tool
 1. Navigate to the directory containing your Docker Compose file.
 2. Run the migration tool:
    ```
+   docker-migration
+   ```
+
+   Or if installed from source:
+   ```
    python src/main.py
    ```
 3. Follow the prompts to complete the migration process.
@@ -65,7 +80,7 @@ docker-migration-tool
 
 #### Backup Mode
 ```
-python src/main.py --mode backup [options]
+docker-migration --mode backup [options]
 ```
 
 Options:
@@ -83,7 +98,7 @@ Options:
 
 #### Restore Mode
 ```
-python src/main.py --mode restore --backup-file PATH [options]
+docker-migration --mode restore --backup-file PATH [options]
 ```
 
 Options:
