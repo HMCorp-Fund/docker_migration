@@ -191,41 +191,47 @@ def backup_docker_data(images=None, containers=None, networks=None, volumes=None
     return backup_dir
 
 
-def backup_all_docker_data():
+def backup_all_docker_data(skip_images=False, skip_containers=False):
     """
     Backup all Docker data using CLI commands
     
+    Args:
+        skip_images (bool): Skip backing up images
+        skip_containers (bool): Skip backing up containers
+    
     Returns:
-        str: Path to the Docker backup directory
-        list: List of image names
-        list: List of container IDs
-        list: List of network IDs
+        tuple: (backup_dir, images, containers, networks)
     """
-    # Get all containers (running and stopped)
-    containers_raw = run_command("docker ps -a --format '{{.ID}}'")
-    containers = containers_raw.splitlines() if containers_raw else []
-    
-    # Get all images, not just those used by containers
-    images_raw = run_command("docker images --format '{{.Repository}}:{{.Tag}}'")
     images = []
-    if images_raw:
-        for img in images_raw.splitlines():
-            if img != '<none>:<none>':  # Skip untagged images
-                images.append(img)
+    containers = []
+    networks = []
+    volumes = []
     
-    # Get images used by containers too (as backup)
-    for container in containers:
-        image = run_command(f"docker inspect --format='{{{{.Config.Image}}}}' {container}")
-        if image and image not in images:
-            images.append(image)
+    # Get all running containers
+    if not skip_containers:
+        all_containers_raw = run_command("docker ps -a --format '{{.Names}}'")
+        containers = all_containers_raw.splitlines() if all_containers_raw else []
     
-    # Get all networks
-    networks_raw = run_command("docker network ls --format '{{.Name}}'")
-    networks = networks_raw.splitlines() if networks_raw else []
-    networks = [n for n in networks if n not in ('bridge', 'host', 'none')]
+    # Get all images
+    if not skip_images:
+        all_images_raw = run_command("docker images --format '{{.Repository}}:{{.Tag}}'")
+        images = [img for img in all_images_raw.splitlines() if img != "<none>:<none>"] if all_images_raw else []
     
-    # Create backup
-    backup_dir = backup_docker_data(images, containers, networks)
+    # Get all networks (always include)
+    all_networks_raw = run_command("docker network ls --format '{{.Name}}' --filter 'type=custom'")
+    networks = all_networks_raw.splitlines() if all_networks_raw else []
+    
+    # Get all volumes (always include)
+    all_volumes_raw = run_command("docker volume ls --format '{{.Name}}'")
+    volumes = all_volumes_raw.splitlines() if all_volumes_raw else []
+    
+    # Backup data
+    backup_dir = backup_docker_data(
+        images if not skip_images else [], 
+        containers if not skip_containers else [], 
+        networks, 
+        volumes
+    )
     
     return backup_dir, images, containers, networks
 
