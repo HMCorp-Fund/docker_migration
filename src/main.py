@@ -44,6 +44,14 @@ def main():
     parser.add_argument('--compose-file-path', 
                       help='Path to docker-compose.yml file (for restore mode)')
     
+    # Add these arguments in the parser section
+    parser.add_argument('--skip-images', action='store_true',
+                      help='Skip backing up Docker images (which can be large)')
+    parser.add_argument('--skip-containers', action='store_true',
+                      help='Skip backing up Docker containers')
+    parser.add_argument('--config-only', action='store_true',
+                      help='Only backup configurations (skip images and containers)')
+    
     args = parser.parse_args()
     
     compose_file = 'docker-compose.yml'
@@ -60,6 +68,15 @@ def main():
             print(f"- Networks: {', '.join(networks)}")
             print(f"- Volumes: {', '.join(volumes)}")
             
+            # Apply skip flags
+            if args.config_only or args.skip_images:
+                print("Skipping Docker images as requested")
+                images = []
+            
+            if args.config_only or args.skip_containers:
+                print("Skipping Docker containers as requested")
+                containers = []
+            
             docker_backup_path = backup_docker_data(images, containers, networks, volumes)
             include_current_dir = True
         else:
@@ -68,7 +85,14 @@ def main():
             else:
                 print(f"No {compose_file} found. Backing up all running Docker entities...")
             
-            docker_backup_path, images, containers, networks = backup_all_docker_data()
+            # Pass skip flags to backup_all_docker_data
+            skip_images = args.config_only or args.skip_images
+            skip_containers = args.config_only or args.skip_containers
+            
+            docker_backup_path, images, containers, networks = backup_all_docker_data(
+                skip_images=skip_images,
+                skip_containers=skip_containers
+            )
             additional_files = []
             
         # Handle current directory inclusion
