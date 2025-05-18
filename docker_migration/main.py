@@ -5,11 +5,11 @@ import shutil
 import tempfile
 import argparse
 import subprocess
-from docker_utils.compose_parser import parse_compose_file
-from docker_utils.docker_backup import backup_docker_data, backup_all_docker_data, restore_docker_backup
-from archive.archiver import create_archives
-from validation.health_check import check_docker_services
-from transfer.file_transfer import transfer_files
+from .docker_utils.compose_parser import parse_compose_file
+from .docker_utils.docker_backup import backup_docker_data, backup_all_docker_data, restore_docker_backup
+from .archive.archiver import create_archives
+from .validation.health_check import check_docker_services
+from .transfer.file_transfer import transfer_files
 
 def run_command(cmd, capture_output=True):
     """Execute a shell command and optionally return its output"""
