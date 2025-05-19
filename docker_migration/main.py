@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import argparse
 import subprocess
+import yaml
 from docker_migration.docker_utils.compose_parser import parse_compose_file
 from docker_migration.docker_utils.docker_backup import backup_docker_data, backup_all_docker_data, restore_docker_backup
 from docker_migration.archive.archiver import create_archives
@@ -29,7 +30,8 @@ def main():
     parser.add_argument('--destination', help='Destination path (local path, user@host:/path for SCP, or ftp://user:pass@host/path for FTP)')
     parser.add_argument('--ftp-user', help='FTP username (if not specified in destination)')
     parser.add_argument('--ftp-pass', help='FTP password (if not specified in destination)')
-    parser.add_argument('--no-prompt', action='store_true', help='Do not prompt for user input')
+    parser.add_argument('--no-prompt', action='store_true', 
+                        help='Do not prompt for user input (useful for scripted operations)')
     
     # Add extract-only related arguments
     parser.add_argument('--extract-only', action='store_true', 
@@ -96,7 +98,13 @@ def main():
                 print("Skipping Docker containers as requested")
                 containers = []
             
-            docker_backup_path = backup_docker_data(images, containers, networks, volumes)
+            docker_backup_path = backup_docker_data(
+                backup_dir=None,  # Let the function create a timestamped directory
+                images=images,
+                containers=containers,
+                networks=networks,
+                volumes=volumes
+            )
             include_current_dir = True
         else:
             if args.backup_all:
@@ -123,7 +131,6 @@ def main():
             print(f"Using specified path {args.docker_src_base_dir} for Docker source files")
             include_current_dir = False
         elif not args.no_prompt:
-            # Only prompt when no docker source directory AND prompts aren't disabled
             include_dir = input("Do you want to include the current directory in the backup? (yes/no): ")
             include_current_dir = include_dir.lower() == 'yes'
 
@@ -280,6 +287,14 @@ def restore_mode(args):
     extract_dir = extract_backup(args.backup_file, target_dir)
     
     # Rest of your restore code...
+
+def load_config(config_path="~/.docker-migration.conf"):
+    """Load configuration file"""
+    config_path = os.path.expanduser(config_path)
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
+    return {}
 
 if __name__ == "__main__":
     main()

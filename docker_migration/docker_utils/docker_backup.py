@@ -5,8 +5,8 @@ import tarfile
 import shutil
 import subprocess
 import datetime
-import time
-import yaml  # Add this import
+import time  # Add this import if it's missing
+import yaml
 import docker  # Add this import
 
 
@@ -31,7 +31,8 @@ def run_command(cmd, capture_output=True, use_sudo=True):
 
 
 def backup_docker_data(backup_dir, images=True, containers=True, networks=True, volumes=True, 
-                       compose_file=None, config_only=False, backup_all=False, pull_images=False):
+                       compose_file=None, config_only=False, backup_all=False, pull_images=False,
+                       no_prompt=False):
     """Backup Docker data including images, containers, and configurations"""
     # Create a timestamped backup directory if one wasn't provided
     if not backup_dir:
@@ -144,6 +145,36 @@ def backup_docker_data(backup_dir, images=True, containers=True, networks=True, 
             run_command(f"docker pull {image}")
     
     print("Docker data backup completed")
+    
+    # After all Docker resources are backed up
+    
+    # Check if we should include the current directory
+    include_current_dir = True if no_prompt else None
+    
+    while include_current_dir is None:
+        response = input("Do you want to include the current directory in the backup? (yes/no): ").strip().lower()
+        if response in ['yes', 'y']:
+            include_current_dir = True
+        elif response in ['no', 'n']:
+            include_current_dir = False
+        else:
+            print("Please enter 'yes' or 'no'")
+    
+    if include_current_dir:
+        # Code to include current directory in backup...
+        current_dir = os.getcwd()
+        print(f"Including current directory: {current_dir}")
+        
+        # Create additional_files archive
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        additional_files_archive = os.path.join(backup_dir, f"additional_files_{timestamp}.tar")
+        
+        # Create the tar archive
+        with tarfile.open(additional_files_archive, "w") as tar:
+            tar.add(".", arcname="./")
+        
+        print(f"Current directory backed up to {additional_files_archive}")
+    
     return backup_dir
 
 
@@ -871,52 +902,60 @@ def backup_containers(backup_dir, containers_to_backup=None):
 
 def backup_volumes(backup_dir, volumes_to_backup=None):
     """Backup Docker volumes"""
+    print("\n=== Starting Docker volume backup ===")
     volumes_dir = os.path.join(backup_dir, 'volumes')
     os.makedirs(volumes_dir, exist_ok=True)
     
     # Get list of all volumes
-    all_volumes_raw = run_command("docker volume ls --format '{{.Name}}'")
+    all_volumes_raw = run_command("docker volume ls -q")
     available_volumes = all_volumes_raw.splitlines() if all_volumes_raw else []
+    
+    print(f"Found {len(available_volumes)} Docker volumes on the system")
     
     # If no specific volumes are specified, back up all
     if not volumes_to_backup:
         volumes_to_backup = available_volumes
         print(f"Backing up all {len(available_volumes)} volumes")
+    else:
+        print(f"Backing up {len(volumes_to_backup)} specified volumes: {', '.join(volumes_to_backup)}")
     
     backed_up_volumes = []
     for volume in volumes_to_backup:
-        print(f"Looking for volume: {volume}")
+        print(f"Processing volume: {volume}")
         
         # Check if volume exists
         if volume in available_volumes:
             print(f"Found volume: {volume}")
             
-            # Create a metadata file for the volume
-            volume_metadata_file = os.path.join(volumes_dir, f"{volume}.json")
             try:
-                volume_metadata = run_command(f"docker volume inspect {volume}")
-                if volume_metadata:
-                    with open(volume_metadata_file, 'w') as f:
-                        f.write(volume_metadata)
-                    
-                    # Create a tarball of the volume data
-                    volume_data_dir = os.path.join(volumes_dir, volume)
-                    os.makedirs(volume_data_dir, exist_ok=True)
-                    
-                    # Use a temporary container to copy the volume data
-                    temp_container = f"volume_backup_{volume.replace('-', '_')}"
-                    run_command(f"docker run --rm --name {temp_container} -v {volume}:/source -v {volume_data_dir}:/target alpine sh -c 'cd /source && tar -cf - . | tar -xf - -C /target'")
-                    
-                    backed_up_volumes.append(volume)
-                    print(f"Successfully backed up volume: {volume}")
-                else:
-                    print(f"Error: No metadata found for volume {volume}")
+                # Create a temporary container to access the volume
+                container_name = f"volume_backup_{volume}_{int(time.time())}"
+                run_command(f"docker run -d --name {container_name} -v {volume}:/volume alpine:latest sleep 30")
+                
+                # Create archive of the volume data
+                volume_archive = os.path.join(volumes_dir, f"{volume}.tar")
+                print(f"Creating archive for volume {volume}...")
+                
+                # Make sure the backup directory exists in the container
+                run_command(f"docker exec {container_name} mkdir -p /tmp")
+                
+                # Create tar archive inside the container
+                run_command(f"docker exec {container_name} tar -cf /tmp/volume.tar -C /volume .")
+                
+                # Copy the archive from the container
+                run_command(f"docker cp {container_name}:/tmp/volume.tar {volume_archive}")
+                
+                # Clean up the temporary container
+                run_command(f"docker rm -f {container_name}")
+                
+                backed_up_volumes.append(volume)
+                print(f"✓ Successfully backed up volume: {volume}")
             except Exception as e:
                 print(f"Error backing up volume {volume}: {e}")
         else:
             print(f"Volume {volume} not found")
     
-    print(f"Successfully backed up {len(backed_up_volumes)} of {len(volumes_to_backup)} volumes")
+    print(f"=== Volume backup complete: {len(backed_up_volumes)} of {len(volumes_to_backup)} volumes backed up ===\n")
     return backed_up_volumes
 
 

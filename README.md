@@ -115,7 +115,7 @@ Options:
 - `--destination PATH`: Specify destination path (local path, user@host:/path for SCP, or ftp://user:pass@host/path for FTP)
 - `--ftp-user USERNAME`: FTP username (if not specified in destination)
 - `--ftp-pass PASSWORD`: FTP password (if not specified in destination)
-- `--no-prompt`: Do not prompt for user input (useful for scripted operations)
+- `--no-prompt`: Do not prompt for user input (automatically include current directory in backup)
 
 #### Restore Mode
 ```
