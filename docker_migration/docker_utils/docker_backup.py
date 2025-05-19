@@ -5,8 +5,9 @@ import tarfile
 import shutil
 import subprocess
 import datetime
-import time  # Add this import if it's missing
+import time  # Important for the container naming
 import yaml
+import glob
 import docker  # Add this import
 
 
@@ -103,34 +104,35 @@ def backup_docker_data(backup_dir, images=True, containers=True, networks=True, 
     
     # ADD THIS SECTION: Back up volumes with proper logging
     if volumes:
+        print("\nProcessing volume backup...")
         if backup_all:
             volumes_to_backup = run_command("docker volume ls -q").splitlines()
         else:
             # Extract volume names from compose file if provided
+            volumes_to_backup = []
             if compose_file and os.path.exists(compose_file):
                 with open(compose_file, 'r') as f:
                     compose_data = yaml.safe_load(f)
-                    # Extract both named volumes and those in services
-                    volumes_to_backup = []
                     
                     # Get named volumes from 'volumes' section
                     if 'volumes' in compose_data:
-                        volumes_to_backup.extend(list(compose_data['volumes'].keys()))
+                        volumes_to_backup.extend(compose_data['volumes'].keys())
                     
-                    # Also check for volumes defined in services
-                    for service_name, service in compose_data.get('services', {}).items():
+                    # Get volumes used in services
+                    services = compose_data.get('services', {})
+                    for service in services.values():
                         if 'volumes' in service:
                             for vol in service['volumes']:
+                                # Handle different volume syntaxes
                                 if isinstance(vol, str) and ':' in vol:
-                                    vol_name = vol.split(':', 1)[0]
-                                    # Only include named volumes (not paths)
-                                    if not vol_name.startswith('.') and not vol_name.startswith('/'):
-                                        volumes_to_backup.append(vol_name)
-
-                extracted_data['volumes'] = volumes_to_backup
-            else:
-                volumes_to_backup = []
-    
+                                    vol_parts = vol.split(':', 1)
+                                    # Only add named volumes (not bind mounts)
+                                    if not vol_parts[0].startswith('./') and not vol_parts[0].startswith('/'):
+                                        volumes_to_backup.append(vol_parts[0])
+        
+        # Remove duplicates while preserving order
+        volumes_to_backup = list(dict.fromkeys(volumes_to_backup))
+        
         if volumes_to_backup:
             print(f"\nBacking up {len(volumes_to_backup)} volumes: {', '.join(volumes_to_backup)}")
             backed_up_volumes = backup_volumes(backup_dir, volumes_to_backup)
@@ -911,6 +913,8 @@ def backup_volumes(backup_dir, volumes_to_backup=None):
     available_volumes = all_volumes_raw.splitlines() if all_volumes_raw else []
     
     print(f"Found {len(available_volumes)} Docker volumes on the system")
+    if available_volumes:
+        print(f"Available volumes: {', '.join(available_volumes[:10])}{'...' if len(available_volumes) > 10 else ''}")
     
     # If no specific volumes are specified, back up all
     if not volumes_to_backup:
@@ -929,15 +933,22 @@ def backup_volumes(backup_dir, volumes_to_backup=None):
             
             try:
                 # Create a temporary container to access the volume
-                container_name = f"volume_backup_{volume}_{int(time.time())}"
-                run_command(f"docker run -d --name {container_name} -v {volume}:/volume alpine:latest sleep 30")
+                timestamp = int(time.time())
+                container_name = f"volume_backup_{volume.replace('-', '_')}_{timestamp}"
+                
+                # Check if Alpine is available, otherwise use busybox
+                alpine_exists = run_command("docker image ls -q alpine:latest")
+                if alpine_exists:
+                    base_image = "alpine:latest"
+                else:
+                    base_image = "busybox:latest"
+                    
+                print(f"Creating temporary container using {base_image}...")
+                run_command(f"docker run -d --name {container_name} -v {volume}:/volume {base_image} sleep 600")
                 
                 # Create archive of the volume data
-                volume_archive = os.path.join(volumes_dir, f"{volume}.tar")
+                volume_archive = os.path.join(volumes_dir, f"{volume.replace('/', '_')}.tar")
                 print(f"Creating archive for volume {volume}...")
-                
-                # Make sure the backup directory exists in the container
-                run_command(f"docker exec {container_name} mkdir -p /tmp")
                 
                 # Create tar archive inside the container
                 run_command(f"docker exec {container_name} tar -cf /tmp/volume.tar -C /volume .")
@@ -951,9 +962,9 @@ def backup_volumes(backup_dir, volumes_to_backup=None):
                 backed_up_volumes.append(volume)
                 print(f"✓ Successfully backed up volume: {volume}")
             except Exception as e:
-                print(f"Error backing up volume {volume}: {e}")
+                print(f"Error backing up volume {volume}: {str(e)}")
         else:
-            print(f"Volume {volume} not found")
+            print(f"Volume {volume} not found on the system")
     
     print(f"=== Volume backup complete: {len(backed_up_volumes)} of {len(volumes_to_backup)} volumes backed up ===\n")
     return backed_up_volumes
