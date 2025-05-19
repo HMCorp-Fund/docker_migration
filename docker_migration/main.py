@@ -100,10 +100,15 @@ def main():
             
             docker_backup_path = backup_docker_data(
                 backup_dir=None,  # Let the function create a timestamped directory
-                images=images,
-                containers=containers,
-                networks=networks,
-                volumes=volumes
+                images=not args.skip_images,
+                containers=not args.skip_containers, 
+                networks=True,
+                volumes=True,
+                compose_file=args.compose_file,
+                config_only=args.config_only,
+                backup_all=args.backup_all,
+                pull_images=args.pull_images,
+                no_prompt=args.no_prompt
             )
             include_current_dir = True
         else:
