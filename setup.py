@@ -2,14 +2,14 @@ from setuptools import setup, find_packages
 
 setup(
     name="docker-migration",
-    version="0.1.1",
+    version="0.1.2",  # Increment version number
     author="Anton Pavlenko",
     author_email="apavlenko@hmcorp.fund",
     description="A tool for migrating Docker applications between servers",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     url="https://github.com/HMCorp-Fund/docker_migration",
-    packages=find_packages(),  # Changed - find packages in the current directory
+    packages=find_packages(),
     python_requires=">=3.6",
     install_requires=[
         "docker",
