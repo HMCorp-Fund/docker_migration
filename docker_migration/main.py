@@ -99,7 +99,7 @@ def main():
                 containers = []
             
             docker_backup_path = backup_docker_data(
-                None,  # First parameter positionally (likely output_dir)
+                backup_dir=None,              # Use named arg for backup_dir
                 images=not args.skip_images,
                 containers=not args.skip_containers, 
                 networks=True,
