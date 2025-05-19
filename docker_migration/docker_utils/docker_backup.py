@@ -940,17 +940,16 @@ def backup_containers(backup_dir, containers_to_backup=None):
 
 def backup_volumes(backup_dir, volumes_to_backup=None):
     """Backup Docker volumes"""
-    print("\n=== Starting Docker volume backup ===")
     volumes_dir = os.path.join(backup_dir, 'volumes')
     os.makedirs(volumes_dir, exist_ok=True)
+    
+    print("\n=== Starting Docker volume backup ===")
     
     # Get list of all volumes
     all_volumes_raw = run_command("docker volume ls -q")
     available_volumes = all_volumes_raw.splitlines() if all_volumes_raw else []
     
     print(f"Found {len(available_volumes)} Docker volumes on the system")
-    if available_volumes:
-        print(f"Available volumes: {', '.join(available_volumes[:10])}{'...' if len(available_volumes) > 10 else ''}")
     
     # If no specific volumes are specified, back up all
     if not volumes_to_backup:
@@ -963,48 +962,35 @@ def backup_volumes(backup_dir, volumes_to_backup=None):
     for volume in volumes_to_backup:
         print(f"Processing volume: {volume}")
         
-        # Check if volume exists
-        if volume in available_volumes:
-            print(f"Found volume: {volume}")
+        # Skip if volume doesn't exist
+        if volume not in available_volumes:
+            print(f"Volume {volume} not found - skipping")
+            continue
             
-            try:
-                # Create a temporary container to access the volume
-                timestamp = int(time.time())
-                container_name = f"volume_backup_{volume.replace('-', '_')}_{timestamp}"
-                
-                # Check if Alpine is available, otherwise use busybox
-                alpine_available = ensure_image_available("alpine:latest")
-                if alpine_available:
-                    base_image = "alpine:latest"
-                else:
-                    busybox_available = ensure_image_available("busybox:latest")
-                    if busybox_available:
-                        base_image = "busybox:latest"
-                    else:
-                        raise Exception("Neither alpine nor busybox images are available")
-                
-                print(f"Creating temporary container using {base_image}...")
-                run_command(f"docker run -d --name {container_name} -v {volume}:/volume {base_image} sleep 600")
-                
-                # Create archive of the volume data
-                volume_archive = os.path.join(volumes_dir, f"{volume.replace('/', '_')}.tar")
-                print(f"Creating archive for volume {volume}...")
-                
-                # Create tar archive inside the container
-                run_command(f"docker exec {container_name} tar -cf /tmp/volume.tar -C /volume .")
-                
-                # Copy the archive from the container
-                run_command(f"docker cp {container_name}:/tmp/volume.tar {volume_archive}")
-                
-                # Clean up the temporary container
-                run_command(f"docker rm -f {container_name}")
-                
-                backed_up_volumes.append(volume)
-                print(f"✓ Successfully backed up volume: {volume}")
-            except Exception as e:
-                print(f"Error backing up volume {volume}: {str(e)}")
-        else:
-            print(f"Volume {volume} not found on the system")
+        try:
+            # Create a temporary container to access the volume
+            timestamp = int(time.time())
+            container_name = f"volume_backup_{volume.replace('-', '_')}_{timestamp}"
+            
+            run_command(f"docker run -d --name {container_name} -v {volume}:/volume alpine:latest sleep 60")
+            
+            # Create archive of the volume data
+            volume_archive = os.path.join(volumes_dir, f"{volume.replace('/', '_')}.tar")
+            print(f"Creating archive for volume {volume}...")
+            
+            # Create tar archive inside the container
+            run_command(f"docker exec {container_name} tar -cf /tmp/volume.tar -C /volume .")
+            
+            # Copy the archive from the container
+            run_command(f"docker cp {container_name}:/tmp/volume.tar {volume_archive}")
+            
+            # Clean up the temporary container
+            run_command(f"docker rm -f {container_name}")
+            
+            backed_up_volumes.append(volume)
+            print(f"Successfully backed up volume: {volume}")
+        except Exception as e:
+            print(f"Error backing up volume {volume}: {e}")
     
     print(f"=== Volume backup complete: {len(backed_up_volumes)} of {len(volumes_to_backup)} volumes backed up ===\n")
     return backed_up_volumes

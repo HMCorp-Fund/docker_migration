@@ -99,12 +99,12 @@ def main():
                 containers = []
             
             docker_backup_path = backup_docker_data(
-                backup_dir=None,  # Let the function create a timestamped directory
+                None,  # First parameter positionally (likely output_dir)
                 images=not args.skip_images,
                 containers=not args.skip_containers, 
                 networks=True,
                 volumes=True,
-                compose_file=args.compose_file_path,  # FIXED: Use the correct argument name
+                compose_file=compose_file,  # Use local variable with default value
                 config_only=args.config_only,
                 backup_all=args.backup_all,
                 pull_images=args.pull_images,
