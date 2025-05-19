@@ -96,6 +96,8 @@ def backup_docker_data(images=True, containers=True, networks=True, volumes=True
     # Back up networks
     if networks:
         print("\n=== Starting Docker network backup ===")
+        networks_to_backup = []  # Initialize this variable first!
+        
         if backup_all:
             all_networks = run_command("docker network ls --format '{{.Name}}'").splitlines()
             networks_to_backup = all_networks
@@ -118,16 +120,16 @@ def backup_docker_data(images=True, containers=True, networks=True, volumes=True
                                 networks_to_backup.extend(service_networks)
                             elif isinstance(service_networks, dict):
                                 networks_to_backup.extend(service_networks.keys())
-        
-        # Remove duplicates while preserving order
-        networks_to_backup = list(dict.fromkeys(networks_to_backup))
-        
-        if networks_to_backup:
-            print(f"Backing up {len(networks_to_backup)} networks: {', '.join(networks_to_backup)}")
-            backed_up_networks = backup_networks(backup_dir, networks_to_backup)
-            extracted_data['networks'] = backed_up_networks
-        else:
-            print("No networks specified to back up")
+    
+    # Remove duplicates while preserving order
+    networks_to_backup = list(dict.fromkeys(networks_to_backup))
+    
+    if networks_to_backup:
+        print(f"Backing up {len(networks_to_backup)} networks: {', '.join(networks_to_backup)}")
+        backed_up_networks = backup_networks(backup_dir, networks_to_backup)
+        extracted_data['networks'] = backed_up_networks
+    else:
+        print("No networks specified to back up")
     
     # ADD THIS SECTION: Back up volumes with proper logging
     if volumes:
