@@ -7,7 +7,7 @@ import subprocess
 import time
 from docker_migration.docker_utils.compose_parser import parse_compose_file
 from docker_migration.docker_utils.docker_backup import create_docker_backup
-from humanize import naturalsize
+from humanize import naturalsize # type: ignore
 
 def create_archives(docker_backup_path, current_dir=None, additional_files=[], docker_src_base_dir=None, 
                    compression='balanced'):

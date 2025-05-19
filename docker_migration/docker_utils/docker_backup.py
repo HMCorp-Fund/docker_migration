@@ -428,7 +428,7 @@ def extract_backup(backup_file, extract_dir=None):
 
 def restore_images(backup_dir, images=None):
     """Restore Docker images with progress reporting"""
-    from humanize import naturalsize
+    from humanize import naturalsize # type: ignore
     
     images_dir = os.path.join(backup_dir, 'images')
     if not os.path.exists(images_dir):
@@ -644,18 +644,18 @@ def find_backup_archives(temp_dir):
     archives = {
         'current_dir': None,
         'docker_src_base_dir': None
-    }
+    };
     
     for file in os.listdir(temp_dir):
         if file.startswith('current_dir_') and file.endswith('.tar'):
-            archives['current_dir'] = os.path.join(temp_dir, file)
+            archives['current_dir'] = os.path.join(temp_dir, file);
         elif file.startswith('additional_path_') and file.endswith('.tar'):
             # Legacy support for old archive name
-            archives['docker_src_base_dir'] = os.path.join(temp_dir, file)
+            archives['docker_src_base_dir'] = os.path.join(temp_dir, file);
         elif file.startswith('docker_src_base_dir_') and file.endswith('.tar'):
-            archives['docker_src_base_dir'] = os.path.join(temp_dir, file)
+            archives['docker_src_base_dir'] = os.path.join(temp_dir, file);
     
-    return archives
+    return archives;
 
 def extract_archive(archive_path, target_dir, description):
     """Extract an archive file to target directory"""
@@ -768,10 +768,11 @@ def restore_containers(backup_dir, networks, volumes):
     return restored_containers
 
 
-def restore_docker_backup(backup_file, restore_images=True, restore_containers=True, restore_networks=True, 
-                        restore_volumes=True, no_prompt=False):
+def restore_docker_backup(backup_file, should_restore_images=True, should_restore_containers=True, 
+                         should_restore_networks=True, should_restore_volumes=True, no_prompt=False,
+                         compose_file_path=None):
     """Restore Docker backup from archive file with improved compression detection"""
-    from humanize import naturalsize
+    from humanize import naturalsize # type: ignore
     
     print(f"Restoring Docker backup from: {backup_file}")
     print(f"Archive size: {naturalsize(os.path.getsize(backup_file))}")
@@ -792,13 +793,26 @@ def restore_docker_backup(backup_file, restore_images=True, restore_containers=T
         shutil.rmtree(temp_dir)
         return False
     
-    # Rest of restore function...
+    # Look for docker backup directory in the extracted files
+    backup_dir = None
+    for item in os.listdir(temp_dir):
+        if item.startswith('docker_backup_') and os.path.isdir(os.path.join(temp_dir, item)):
+            backup_dir = os.path.join(temp_dir, item)
+            break
+    
+    if not backup_dir:
+        print("Error: Could not find docker backup directory in the extracted files")
+        shutil.rmtree(temp_dir)
+        return False
+    
     # Extract application files 
     current_dir = os.getcwd()
     app_files_extracted = restore_application_files(backup_file, current_dir)
     
     # Restore images - they don't have Compose-specific labels
-    restored_images = restore_images(backup_dir)
+    restored_images = []
+    if should_restore_images:  # Renamed parameter
+        restored_images = restore_images(backup_dir)  # Now we can call the function directly
     
     # Find the compose file to use
     compose_file = find_compose_file(compose_file_path, current_dir)
@@ -810,10 +824,18 @@ def restore_docker_backup(backup_file, restore_images=True, restore_containers=T
         print("\nWarning: No docker-compose.yml found after extraction.")
         print("Falling back to direct restoration, but Docker Compose commands won't work properly.")
         
+        # Fix name collisions by using different variable names for the boolean flags
+        restored_networks = []
+        restored_volumes = []
+        restored_containers = []
+        
         # Fall back to direct network/container restoration without labels
-        restored_networks = restore_networks(backup_dir)
-        restored_volumes = restore_volumes(backup_dir)
-        restored_containers = restore_containers(backup_dir, restored_networks, restored_volumes)
+        if should_restore_networks:  # This is the boolean parameter
+            restored_networks = restore_networks(backup_dir)  # This calls the function
+        if should_restore_volumes:   # This is the boolean parameter
+            restored_volumes = restore_volumes(backup_dir)    # This calls the function
+        if should_restore_containers:  # This is the boolean parameter
+            restored_containers = restore_containers(backup_dir, restored_networks, restored_volumes)
     
     print(f"\nDocker restoration complete!")
     print(f"Restored {len(restored_images)} images, {len(restored_networks)} networks, and {len(restored_containers)} containers")
@@ -1142,3 +1164,8 @@ def ensure_image_available(image_name):
         pull_cmd = f"docker pull {image_name}"
         return run_command(pull_cmd, capture_output=False)
     return True
+
+def restore_docker_images(backup_dir):
+    """Wrapper function to avoid name collision with parameter"""
+    # Simply call the existing restore_images function
+    return restore_images(backup_dir)

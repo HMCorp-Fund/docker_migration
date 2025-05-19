@@ -131,17 +131,18 @@ def main():
                 print("Skipping Docker containers as requested")
                 containers = []
             
+            # When calling backup_docker_data:
             docker_backup_path = backup_docker_data(
-                not args.skip_images,  # images as first positional argument
-                not args.skip_containers,  # containers as second positional argument
-                True,  # networks as third positional argument  
-                True,  # volumes as fourth positional argument
-                arg_compose_file,  # compose_file as fifth positional argument
-                args.config_only,
-                args.backup_all,
-                args.pull_images,
-                args.no_prompt,
-                include_current_dir
+                images=not args.skip_images,        # Use named parameters
+                containers=not args.skip_containers, 
+                networks=True,
+                volumes=True,
+                compose_file=arg_compose_file,      # Correct parameter name
+                config_only=args.config_only,
+                backup_all=args.backup_all,
+                pull_images=args.pull_images,
+                no_prompt=args.no_prompt,
+                include_current_dir=include_current_dir
             )
             include_current_dir = True
         else:
