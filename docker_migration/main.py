@@ -70,6 +70,18 @@ def main():
     
     compose_file = 'docker-compose.yml'
     
+    # Add this initialization before using include_current_dir variable
+    include_current_dir = None
+    
+    # Check if docker source base directory is specified
+    if hasattr(args, 'docker_src_base_dir') and args.docker_src_base_dir:
+        # When docker source base directory is provided, don't include current dir
+        print(f"Using specified path {args.docker_src_base_dir} for Docker source files")
+        include_current_dir = False
+    elif args.no_prompt:
+        # With no-prompt flag, include current directory by default
+        include_current_dir = True
+
     if args.mode == 'backup':
         if os.path.exists(compose_file) and not args.backup_all:
             print(f"Found {compose_file}. Backing up resources defined in the compose file...")
@@ -109,7 +121,7 @@ def main():
                 backup_all=args.backup_all,
                 pull_images=args.pull_images,
                 no_prompt=args.no_prompt,
-                include_current_dir=include_current_dir  # Pass the value or None
+                include_current_dir=include_current_dir  # Now defined
             )
             include_current_dir = True
         else:
