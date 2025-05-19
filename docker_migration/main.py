@@ -68,7 +68,7 @@ def main():
     
     args = parser.parse_args()
     
-    compose_file = 'docker-compose.yml'
+    arg_compose_file = 'docker-compose.yml'
     
     # Add this initialization before using include_current_dir variable
     include_current_dir = None
@@ -83,9 +83,9 @@ def main():
         include_current_dir = True
 
     if args.mode == 'backup':
-        if os.path.exists(compose_file) and not args.backup_all:
-            print(f"Found {compose_file}. Backing up resources defined in the compose file...")
-            images, containers, networks, volumes, additional_files = parse_compose_file(compose_file)
+        if os.path.exists(arg_compose_file) and not args.backup_all:
+            print(f"Found {arg_compose_file}. Backing up resources defined in the compose file...")
+            images, containers, networks, volumes, additional_files = parse_compose_file(arg_compose_file)
             
             # Debug output
             print("Resources detected in docker-compose.yml:")
@@ -116,7 +116,7 @@ def main():
                 containers=not args.skip_containers, 
                 networks=True,
                 volumes=True,
-                compose_file=compose_file,  # Use local variable with default value
+                compose_file=arg_compose_file,  # Use local variable with default value
                 config_only=args.config_only,
                 backup_all=args.backup_all,
                 pull_images=args.pull_images,
@@ -128,7 +128,7 @@ def main():
             if args.backup_all:
                 print("Backing up all Docker resources on the server...")
             else:
-                print(f"No {compose_file} found. Backing up all running Docker entities...")
+                print(f"No {arg_compose_file} found. Backing up all running Docker entities...")
             
             # Pass skip flags to backup_all_docker_data
             skip_images = args.config_only or args.skip_images
