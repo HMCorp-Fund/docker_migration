@@ -104,7 +104,7 @@ def main():
                 containers=not args.skip_containers, 
                 networks=True,
                 volumes=True,
-                compose_file=args.compose_file,
+                compose_file=args.compose_file_path,  # FIXED: Use the correct argument name
                 config_only=args.config_only,
                 backup_all=args.backup_all,
                 pull_images=args.pull_images,
