@@ -33,7 +33,7 @@ def run_command(cmd, capture_output=True, use_sudo=False):
         return "" if capture_output else False
 
 
-def backup_docker_data(backup_dir, images=True, containers=True, networks=True, volumes=True, 
+def backup_docker_data(backup_dir="./", images=True, containers=True, networks=True, volumes=True, 
                        compose_file=None, config_only=False, backup_all=False, pull_images=False,
                        no_prompt=False, include_current_dir=None):
     """Backup Docker data including images, containers, and configurations"""
