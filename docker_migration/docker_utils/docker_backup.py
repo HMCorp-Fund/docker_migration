@@ -33,14 +33,14 @@ def run_command(cmd, capture_output=True, use_sudo=False):
         return "" if capture_output else False
 
 
-def backup_docker_data(backup_dir="./", images=True, containers=True, networks=True, volumes=True, 
+def backup_docker_data(images=True, containers=True, networks=True, volumes=True, 
                        compose_file=None, config_only=False, backup_all=False, pull_images=False,
                        no_prompt=False, include_current_dir=None):
     """Backup Docker data including images, containers, and configurations"""
     # Create a timestamped backup directory if one wasn't provided
-    if not backup_dir:
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_dir = f"docker_backup_{timestamp}"
+    
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_dir = f"docker_backup_{timestamp}"
     
     os.makedirs(backup_dir, exist_ok=True)
     print(f"Backing up Docker data to: {backup_dir}")
