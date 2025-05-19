@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="docker-migration",
-    version="0.1.0",
+    version="0.1.1",
     author="Anton Pavlenko",
     author_email="apavlenko@hmcorp.fund",
     description="A tool for migrating Docker applications between servers",

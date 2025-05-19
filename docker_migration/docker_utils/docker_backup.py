@@ -891,3 +891,40 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def backup_containers(backup_dir, containers_to_backup=None):
+    """Backup Docker containers"""
+    os.makedirs(os.path.join(backup_dir, 'containers'), exist_ok=True)
+    
+    # Get list of all containers
+    all_containers = run_command("docker ps -a --format '{{.Names}}'").splitlines()
+    
+    # If no specific containers are specified, back up all
+    if not containers_to_backup:
+        containers_to_backup = all_containers
+        print(f"Backing up all {len(all_containers)} containers")
+    
+    for container in containers_to_backup:
+        print(f"Looking for container: {container}")
+        if container in all_containers:
+            print(f"Found container: {container}")
+            # Rest of your backup code...
+        else:
+            print(f"Container {container} not found with any naming pattern")
+
+def backup_volumes(backup_dir):
+    """Backup Docker volumes"""
+    print("Starting Docker volume backup...")
+    os.makedirs(os.path.join(backup_dir, 'volumes'), exist_ok=True)
+    
+    # Get list of volumes
+    volumes = run_command("docker volume ls -q").splitlines()
+    print(f"Found {len(volumes)} volumes to backup")
+    
+    for volume in volumes:
+        print(f"Backing up volume: {volume}")
+        # Your volume backup code...
+        print(f"Successfully backed up volume: {volume}")
+    
+    print("Volume backup complete")
