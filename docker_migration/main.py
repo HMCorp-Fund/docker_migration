@@ -66,21 +66,42 @@ def main():
     parser.add_argument('--pull-images', action='store_true',
                       help='Pull Docker images defined in docker-compose.yml before backup')
     
+    # Add to your argument parser:
+    parser.add_argument('--compression', choices=['none', 'fast', 'balanced', 'max'], 
+                  default='none',
+                  help='Compression level for archives (none=fastest, max=smallest)')
+    
+    # In the argument parser section:
+    parser.add_argument('--extract-compression', choices=['auto', 'none', 'gzip', 'bzip2'], 
+                  default='auto',
+                  help='Compression format for extraction (auto=detect)')
+    
     args = parser.parse_args()
     
     arg_compose_file = 'docker-compose.yml'
     
     # Add this initialization before using include_current_dir variable
     include_current_dir = None
-    
-    # Check if docker source base directory is specified
-    if hasattr(args, 'docker_src_base_dir') and args.docker_src_base_dir:
-        # When docker source base directory is provided, don't include current dir
+
+    # If no-prompt is specified, set directly
+    if args.no_prompt:
+        include_current_dir = True
+    elif hasattr(args, 'docker_src_base_dir') and args.docker_src_base_dir:
         print(f"Using specified path {args.docker_src_base_dir} for Docker source files")
         include_current_dir = False
-    elif args.no_prompt:
-        # With no-prompt flag, include current directory by default
-        include_current_dir = True
+    else:
+        # Add a more robust prompt with validation
+        valid_response = False
+        while not valid_response:
+            response = input("Do you want to include the current directory in the backup? (yes/no): ").strip().lower()
+            if response in ['yes', 'y']:
+                include_current_dir = True
+                valid_response = True
+            elif response in ['no', 'n']:
+                include_current_dir = False
+                valid_response = True
+            else:
+                print("Please enter 'yes' or 'no'")
 
     if args.mode == 'backup':
         if os.path.exists(arg_compose_file) and not args.backup_all:
@@ -166,7 +187,8 @@ def main():
             docker_backup_path, 
             current_directory if include_current_dir else None,
             additional_files,
-            docker_src_base_dir
+            docker_src_base_dir,
+            compression=args.compression
         )
 
         # Handle file transfer
@@ -274,9 +296,16 @@ def main():
                     else:
                         print(f"No docker-compose.yml found in {first_subdir} directory")
             
-            restored_images, restored_networks, restored_containers = restore_docker_backup(
-                args.backup_file, 
-                compose_file_path=compose_file_path
+            # Pass the extract compression option
+            success = restore_docker_backup(
+                args.backup_file,
+                compose_file_path=compose_file_path,
+                restore_images=not args.skip_images,
+                restore_containers=not args.skip_containers,
+                restore_networks=not args.skip_networks,
+                restore_volumes=not args.skip_volumes,
+                no_prompt=args.no_prompt,
+                extract_compression=args.extract_compression
             )
             
             # Wait a moment for services to start

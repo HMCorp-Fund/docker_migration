@@ -5,3 +5,4 @@ requests
 paramiko
 pyyaml<6.0,>=3.10
 zipfile36
+humanize>=4.6.0

@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="docker-migration",
-    version="0.1.9",  # Increment version number
+    version="0.1.10",  # Increment version number
     author="Anton Pavlenko",
     author_email="apavlenko@hmcorp.fund",
     description="A tool for migrating Docker applications between servers",
@@ -15,8 +15,9 @@ setup(
         "docker",
         "requests",
         "paramiko",
-        "pyyaml>=6.0.1",
+        "pyyaml",
         "zipfile36",
+        "humanize",
     ],
     entry_points={
         'console_scripts': [

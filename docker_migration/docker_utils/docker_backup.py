@@ -33,7 +33,9 @@ def run_command(cmd, capture_output=True, use_sudo=False):
         return "" if capture_output else False
 
 
-def backup_docker_data(images=True, containers=True, networks=True, volumes=True, compose_file=None, config_only=False, backup_all=False, pull_images=False, no_prompt=False, include_current_dir=None):
+def backup_docker_data(images=True, containers=True, networks=True, volumes=True, compose_file=None, 
+                      config_only=False, backup_all=False, pull_images=False, no_prompt=False, 
+                      include_current_dir=None):
     """Backup Docker data including images, containers, and configurations"""
     # Create a timestamped backup directory if one wasn't provided
     
@@ -192,21 +194,21 @@ def backup_docker_data(images=True, containers=True, networks=True, volumes=True
     elif no_prompt:
         include_current_dir = True
     else:
-        # Only prompt if a value wasn't provided and no_prompt is False
-        while include_current_dir is None:
+        # Only prompt if not specified
+        valid_response = False
+        while not valid_response:
             response = input("Do you want to include the current directory in the backup? (yes/no): ").strip().lower()
             if response in ['yes', 'y']:
                 include_current_dir = True
+                valid_response = True
             elif response in ['no', 'n']:
                 include_current_dir = False
+                valid_response = True
             else:
                 print("Please enter 'yes' or 'no'")
     
     if include_current_dir:
-        # Code to include current directory in backup...
-        current_dir = os.getcwd()
-        print(f"Including current directory: {current_dir}")
-        
+        print(f"Including current directory: {os.getcwd()}")
         # Create additional_files archive
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         additional_files_archive = os.path.join(backup_dir, f"additional_files_{timestamp}.tar")
@@ -424,95 +426,97 @@ def extract_backup(backup_file, extract_dir=None):
     return extract_dir
 
 
-def restore_images(backup_dir):
-    """
-    Restore Docker images from backup
+def restore_images(backup_dir, images=None):
+    """Restore Docker images with progress reporting"""
+    from humanize import naturalsize
     
-    Args:
-        backup_dir (str): Path to the extracted backup directory
-        
-    Returns:
-        list: List of restored image names
-    """
     images_dir = os.path.join(backup_dir, 'images')
-    
     if not os.path.exists(images_dir):
-        print(f"No images found in {backup_dir}")
+        print("No image backups found")
         return []
     
+    image_files = [f for f in os.listdir(images_dir) if f.endswith('.tar')]
+    print(f"Found {len(image_files)} image backups")
+    
     restored_images = []
+    for image_file in image_files:
+        image_path = os.path.join(images_dir, image_file)
+        image_size = os.path.getsize(image_path)
+        
+        print(f"Loading image: {image_file} ({naturalsize(image_size)})")
+        print("This may take a while for large images...")
+        
+        start_time = time.time()
+        result = run_command(f"docker load -i {image_path}")
+        elapsed = time.time() - start_time
+        
+        # Extract image name from output or filename
+        if "Loaded image" in result:
+            image_name = result.split("Loaded image")[1].strip().strip(':')
+        else:
+            # Try to derive image name from filename
+            image_name = image_file.replace('.tar', '').replace('_', ':')
+        
+        print(f"✓ Restored image {image_name} in {elapsed:.1f} seconds")
+        restored_images.append(image_name)
     
-    for image_file in os.listdir(images_dir):
-        if image_file.endswith('.tar'):
-            image_path = os.path.join(images_dir, image_file)
-            print(f"Loading image: {image_file}")
-            result = run_command(f"docker load -i '{image_path}'")
-            if result:
-                # Extract image name from docker load output
-                # Output format: "Loaded image: image:tag"
-                if "Loaded image" in result:
-                    image_name = result.split("Loaded image", 1)[1].strip(": \n")
-                    restored_images.append(image_name)
-                    print(f"Successfully loaded image: {image_name}")
-                else:
-                    print(f"Loaded image but couldn't determine name from: {result}")
-    
-    print(f"Restored {len(restored_images)} Docker images")
     return restored_images
 
 
-def restore_volumes(backup_dir):
-    """
-    Restore Docker volumes from backup
-    
-    Args:
-        backup_dir (str): Path to the extracted backup directory
-        
-    Returns:
-        list: List of restored volume names
-    """
+def restore_volumes(backup_dir, volumes=None):
+    """Restore Docker volumes with improved prefix handling"""
     volumes_dir = os.path.join(backup_dir, 'volumes')
-    
     if not os.path.exists(volumes_dir):
-        print(f"No volumes found in {backup_dir}")
+        print("No volume backups found")
         return []
+        
+    volume_files = [f for f in os.listdir(volumes_dir) if f.endswith('.tar')]
+    print(f"Found {len(volume_files)} volume backups")
     
     restored_volumes = []
-    
-    # Get list of volume metadata files
-    volume_files = [f for f in os.listdir(volumes_dir) if f.endswith('.json')]
+    current_dir = os.path.basename(os.getcwd())
     
     for volume_file in volume_files:
-        volume_name = os.path.splitext(volume_file)[0]
-        volume_path = os.path.join(volumes_dir, volume_file)
+        # Extract original volume name from filename
+        volume_name = volume_file.replace('.tar', '').replace('_', '-')
         
-        # Check if volume already exists
-        check_result = run_command(f"docker volume ls --format '{{{{.Name}}}}' --filter name=^{volume_name}$")
-        if check_result and volume_name in check_result.splitlines():
-            print(f"Volume {volume_name} already exists, skipping creation")
-            restored_volumes.append(volume_name)
+        if volumes and volume_name not in volumes:
+            print(f"Skipping volume {volume_name} (not in restore list)")
             continue
-        
-        # Create the volume
-        print(f"Creating volume: {volume_name}")
-        create_result = run_command(f"docker volume create {volume_name}")
-        
-        if create_result:
-            # Restore volume data
-            volume_data_dir = os.path.join(volumes_dir, volume_name)
             
-            if os.path.exists(volume_data_dir) and os.path.isdir(volume_data_dir):
-                # Use alpine to copy data from backup to the volume
-                temp_container = f"volume_restore_{volume_name.replace('-', '_')}"
-                print(f"Restoring data to volume: {volume_name}")
-                restore_cmd = f"docker run --rm --name {temp_container} -v {volume_name}:/target -v {volume_data_dir}:/backup:ro alpine sh -c 'cd /backup && tar -cf - . | tar -xf - -C /target'"
-                run_command(restore_cmd, capture_output=False)
-                
-                restored_volumes.append(volume_name)
-                print(f"Successfully restored volume: {volume_name}")
-            else:
-                print(f"Volume {volume_name} created but no data to restore")
-                restored_volumes.append(volume_name)
+        print(f"Restoring volume: {volume_name}")
+        
+        # Check if volume exists with project prefix
+        prefixed_volume = f"{current_dir}_{volume_name}"
+        
+        # Check if volume exists (with or without prefix)
+        all_volumes = run_command("docker volume ls -q").splitlines()
+        
+        if volume_name in all_volumes:
+            use_volume_name = volume_name
+        elif prefixed_volume in all_volumes:
+            use_volume_name = prefixed_volume
+        else:
+            # Create the volume with project prefix for consistency with docker-compose
+            print(f"Creating volume: {prefixed_volume}")
+            run_command(f"docker volume create {prefixed_volume}")
+            use_volume_name = prefixed_volume
+        
+        # Restore volume data
+        volume_data_dir = os.path.join(volumes_dir, volume_name)
+        
+        if os.path.exists(volume_data_dir) and os.path.isdir(volume_data_dir):
+            # Use alpine to copy data from backup to the volume
+            temp_container = f"volume_restore_{volume_name.replace('-', '_')}"
+            print(f"Restoring data to volume: {volume_name}")
+            restore_cmd = f"docker run --rm --name {temp_container} -v {use_volume_name}:/target -v {volume_data_dir}:/backup:ro alpine sh -c 'cd /backup && tar -cf - . | tar -xf - -C /target'"
+            run_command(restore_cmd, capture_output=False)
+            
+            restored_volumes.append(use_volume_name)
+            print(f"Successfully restored volume: {use_volume_name}")
+        else:
+            print(f"Volume {use_volume_name} created but no data to restore")
+            restored_volumes.append(use_volume_name)
     
     print(f"Restored {len(restored_volumes)} Docker volumes")
     return restored_volumes
@@ -764,15 +768,31 @@ def restore_containers(backup_dir, networks, volumes):
     return restored_containers
 
 
-def restore_docker_backup(backup_file, extract_dir=None, compose_file_path=None):
-    """
-    Restore a Docker backup with proper Docker Compose integration
-    """
-    print(f"Starting Docker restoration from {backup_file}")
+def restore_docker_backup(backup_file, restore_images=True, restore_containers=True, restore_networks=True, 
+                        restore_volumes=True, no_prompt=False):
+    """Restore Docker backup from archive file with improved compression detection"""
+    from humanize import naturalsize
     
-    # Extract the backup
-    backup_dir = extract_backup(backup_file, extract_dir)
+    print(f"Restoring Docker backup from: {backup_file}")
+    print(f"Archive size: {naturalsize(os.path.getsize(backup_file))}")
     
+    temp_dir = tempfile.mkdtemp(prefix="docker_restore_")
+    print(f"Extracting backup to temporary directory: {temp_dir}")
+    
+    # Auto-detect compression format
+    start_time = time.time()
+    try:
+        # tarfile automatically detects compression format
+        with tarfile.open(backup_file, 'r:*') as tar:
+            tar.extractall(path=temp_dir)
+        extract_time = time.time() - start_time
+        print(f"Extraction completed in {extract_time:.1f} seconds")
+    except Exception as e:
+        print(f"Error extracting backup file: {e}")
+        shutil.rmtree(temp_dir)
+        return False
+    
+    # Rest of restore function...
     # Extract application files 
     current_dir = os.getcwd()
     app_files_extracted = restore_application_files(backup_file, current_dir)
