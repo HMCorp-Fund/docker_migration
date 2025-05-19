@@ -35,7 +35,7 @@ def run_command(cmd, capture_output=True, use_sudo=False):
 
 def backup_docker_data(backup_dir, images=True, containers=True, networks=True, volumes=True, 
                        compose_file=None, config_only=False, backup_all=False, pull_images=False,
-                       no_prompt=False):
+                       no_prompt=False, include_current_dir=None):
     """Backup Docker data including images, containers, and configurations"""
     # Create a timestamped backup directory if one wasn't provided
     if not backup_dir:
@@ -103,7 +103,6 @@ def backup_docker_data(backup_dir, images=True, containers=True, networks=True, 
             networks_to_backup = all_networks
         else:
             # Extract network names from compose file if provided
-            networks_to_backup = []
             if compose_file and os.path.exists(compose_file):
                 with open(compose_file, 'r') as f:
                     compose_data = yaml.safe_load(f)
@@ -121,16 +120,16 @@ def backup_docker_data(backup_dir, images=True, containers=True, networks=True, 
                                 networks_to_backup.extend(service_networks)
                             elif isinstance(service_networks, dict):
                                 networks_to_backup.extend(service_networks.keys())
-    
-    # Remove duplicates while preserving order
-    networks_to_backup = list(dict.fromkeys(networks_to_backup))
-    
-    if networks_to_backup:
-        print(f"Backing up {len(networks_to_backup)} networks: {', '.join(networks_to_backup)}")
-        backed_up_networks = backup_networks(backup_dir, networks_to_backup)
-        extracted_data['networks'] = backed_up_networks
-    else:
-        print("No networks specified to back up")
+        
+        # Remove duplicates while preserving order
+        networks_to_backup = list(dict.fromkeys(networks_to_backup))
+        
+        if networks_to_backup:
+            print(f"Backing up {len(networks_to_backup)} networks: {', '.join(networks_to_backup)}")
+            backed_up_networks = backup_networks(backup_dir, networks_to_backup)
+            extracted_data['networks'] = backed_up_networks
+        else:
+            print("No networks specified to back up")
     
     # ADD THIS SECTION: Back up volumes with proper logging
     if volumes:
@@ -187,16 +186,21 @@ def backup_docker_data(backup_dir, images=True, containers=True, networks=True, 
     # After all Docker resources are backed up
     
     # Check if we should include the current directory
-    include_current_dir = True if no_prompt else None
-    
-    while include_current_dir is None:
-        response = input("Do you want to include the current directory in the backup? (yes/no): ").strip().lower()
-        if response in ['yes', 'y']:
-            include_current_dir = True
-        elif response in ['no', 'n']:
-            include_current_dir = False
-        else:
-            print("Please enter 'yes' or 'no'")
+    if include_current_dir is not None:
+        # Use the value passed from main.py
+        pass
+    elif no_prompt:
+        include_current_dir = True
+    else:
+        # Only prompt if a value wasn't provided and no_prompt is False
+        while include_current_dir is None:
+            response = input("Do you want to include the current directory in the backup? (yes/no): ").strip().lower()
+            if response in ['yes', 'y']:
+                include_current_dir = True
+            elif response in ['no', 'n']:
+                include_current_dir = False
+            else:
+                print("Please enter 'yes' or 'no'")
     
     if include_current_dir:
         # Code to include current directory in backup...

@@ -108,7 +108,8 @@ def main():
                 config_only=args.config_only,
                 backup_all=args.backup_all,
                 pull_images=args.pull_images,
-                no_prompt=args.no_prompt
+                no_prompt=args.no_prompt,
+                include_current_dir=include_current_dir  # Pass the value or None
             )
             include_current_dir = True
         else:
@@ -135,9 +136,9 @@ def main():
             # When docker source base directory is provided, don't automatically include current dir
             print(f"Using specified path {args.docker_src_base_dir} for Docker source files")
             include_current_dir = False
-        elif not args.no_prompt:
-            include_dir = input("Do you want to include the current directory in the backup? (yes/no): ")
-            include_current_dir = include_dir.lower() == 'yes'
+        else:
+            # We'll let backup_docker_data handle the prompt
+            include_current_dir = None  # Will be determined by the function
 
         # Handle docker source base directory
         docker_src_base_dir = None
