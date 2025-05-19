@@ -110,8 +110,9 @@ def main():
                 print("Skipping Docker containers as requested")
                 containers = []
             
+            # OPTION 1: Use all named parameters (safer)
             docker_backup_path = backup_docker_data(
-                None,                         # Pass as positional parameter
+                backup_dir=None,              # Use correct parameter name
                 images=not args.skip_images,
                 containers=not args.skip_containers, 
                 networks=True,
