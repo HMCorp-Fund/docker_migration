@@ -5,6 +5,9 @@ import tarfile
 import shutil
 import subprocess
 import datetime
+import time
+import yaml  # Add this import
+import docker  # Add this import
 
 
 def run_command(cmd, capture_output=True, use_sudo=True):
@@ -27,202 +30,120 @@ def run_command(cmd, capture_output=True, use_sudo=True):
         return None
 
 
-def backup_docker_data(images=None, containers=None, networks=None, volumes=None):
-    """
-    Backup Docker data using CLI commands
-    """
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_dir = tempfile.mkdtemp(prefix="docker_backup_")
+def backup_docker_data(backup_dir, images=True, containers=True, networks=True, volumes=True, 
+                       compose_file=None, config_only=False, backup_all=False, pull_images=False):
+    """Backup Docker data including images, containers, and configurations"""
+    # Create a timestamped backup directory if one wasn't provided
+    if not backup_dir:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_dir = f"docker_backup_{timestamp}"
     
-    # Create directories for each backup type
-    images_dir = os.path.join(backup_dir, "images")
-    containers_dir = os.path.join(backup_dir, "containers")
-    networks_dir = os.path.join(backup_dir, "networks")
-    volumes_dir = os.path.join(backup_dir, "volumes")
+    os.makedirs(backup_dir, exist_ok=True)
+    print(f"Backing up Docker data to: {backup_dir}")
     
-    os.makedirs(images_dir, exist_ok=True)
-    os.makedirs(containers_dir, exist_ok=True)
-    os.makedirs(networks_dir, exist_ok=True)
-    os.makedirs(volumes_dir, exist_ok=True)
+    extracted_data = {}
     
-    # Get project name for resource name prefixing
-    project_dir = os.path.basename(os.getcwd())
-    print(f"Detected project directory: {project_dir}")
-    
-    # First fetch ALL available images on the system
-    all_images_raw = run_command("docker images --format '{{.Repository}}:{{.Tag}}'")
-    available_images = []
-    if all_images_raw:
-        available_images = [img for img in all_images_raw.splitlines() if img != "<none>:<none>"]
-    print(f"Found {len(available_images)} Docker images on the system")
-    
-    # Fetch all containers including stopped ones
-    all_containers_raw = run_command("docker ps -a --format '{{.Names}}'")
-    all_containers = all_containers_raw.splitlines() if all_containers_raw else []
-    print(f"Found {len(all_containers)} Docker containers on the system (including stopped)")
-    
-    # Fetch all networks
-    all_networks_raw = run_command("docker network ls --format '{{.Name}}'")
-    all_networks = all_networks_raw.splitlines() if all_networks_raw else []
-    print(f"Found {len(all_networks)} Docker networks on the system")
-    
-    # Fetch all volumes
-    all_volumes_raw = run_command("docker volume ls --format '{{.Name}}'")
-    all_volumes = all_volumes_raw.splitlines() if all_volumes_raw else []
-    print(f"Found {len(all_volumes)} Docker volumes on the system")
-    
-    # Backup images with intelligent matching
+    # Back up images
     if images:
-        # Debug output for images to back up
-        print(f"Attempting to back up {len(images)} images from compose file")
+        all_images_raw = run_command("docker images --format '{{.Repository}}:{{.Tag}}'")
+        available_images = [img for img in all_images_raw.splitlines() if img != "<none>:<none>"]
         
-        # Create a map of images for easier lookups
-        image_map = {}
-        for img in available_images:
-            # Store both with and without tag variations
-            repo_with_tag = img
-            repo_only = img.split(':')[0] if ':' in img else img
-            image_map[repo_with_tag] = img
-            image_map[repo_only] = img
-            # Handle 'latest' tag special case
-            if ':latest' in img:
-                repo_without_tag = img.split(':')[0]
-                image_map[repo_without_tag] = img
+        if backup_all:
+            images_to_backup = available_images
+        else:
+            # Extract image names from compose file if provided
+            if compose_file and os.path.exists(compose_file):
+                with open(compose_file, 'r') as f:
+                    compose_data = yaml.safe_load(f)
+                    services = compose_data.get('services', {})
+                    images_to_backup = [svc.get('image') for svc in services.values() if svc.get('image')]
+            else:
+                images_to_backup = []
         
-        backed_up_images = []
-        for image in images:
-            print(f"Looking for image: {image}")
-            backed_up = False
-            
-            # 1. Try exact match first
-            if image in image_map:
-                actual_image = image_map[image]
-                print(f"Found exact match: {actual_image}")
-                try:
-                    image_file = os.path.join(images_dir, actual_image.replace('/', '_').replace(':', '_') + '.tar')
-                    run_command(f"docker save {actual_image} -o '{image_file}'")
-                    backed_up_images.append(actual_image)
-                    backed_up = True
-                except Exception as e:
-                    print(f"Error saving image {actual_image}: {e}")
-            
-            # 2. Try without tag if it has one
-            if not backed_up and ':' in image:
-                repo = image.split(':')[0]
-                if repo in image_map:
-                    actual_image = image_map[repo]
-                    print(f"Found repo match: {actual_image} for {image}")
-                    try:
-                        image_file = os.path.join(images_dir, actual_image.replace('/', '_').replace(':', '_') + '.tar')
-                        run_command(f"docker save {actual_image} -o '{image_file}'")
-                        backed_up_images.append(actual_image)
-                        backed_up = True
-                    except Exception as e:
-                        print(f"Error saving image {actual_image}: {e}")
-                
-            # 3. Try with 'latest' tag if no tag specified
-            if not backed_up and ':' not in image:
-                image_latest = f"{image}:latest"
-                if image_latest in image_map:
-                    actual_image = image_map[image_latest]
-                    print(f"Found with latest tag: {actual_image}")
-                    try:
-                        image_file = os.path.join(images_dir, actual_image.replace('/', '_').replace(':', '_') + '.tar')
-                        run_command(f"docker save {actual_image} -o '{image_file}'")
-                        backed_up_images.append(actual_image)
-                        backed_up = True
-                    except Exception as e:
-                        print(f"Error saving image {actual_image}: {e}")
-            
-            if not backed_up:
-                print(f"Warning: Image {image} not found on the system")
-                
-                # Additional hint: let's see what's available
-                possible_matches = [img for img in available_images if image.split(':')[0] in img]
-                if possible_matches:
-                    print(f"  Possible matches: {', '.join(possible_matches)}")
-                    
-                    # Try to back up the first close match if found
-                    print(f"  Trying first match: {possible_matches[0]}")
-                    try:
-                        image_file = os.path.join(images_dir, possible_matches[0].replace('/', '_').replace(':', '_') + '.tar')
-                        run_command(f"docker save {possible_matches[0]} -o '{image_file}'")
-                        backed_up_images.append(possible_matches[0])
-                        backed_up = True
-                        print(f"  Successfully backed up {possible_matches[0]} as a fallback")
-                    except Exception as e:
-                        print(f"  Error saving fallback image {possible_matches[0]}: {e}")
-        
-        print(f"Successfully backed up {len(backed_up_images)} of {len(images)} images")
+        if images_to_backup:
+            print(f"Backing up {len(images_to_backup)} images: {', '.join(images_to_backup)}")
+            backed_up_images = backup_images(backup_dir, images_to_backup)
+            extracted_data['images'] = backed_up_images
+        else:
+            print("No images specified to back up")
     
-    # Backup container configurations with improved suffix matching
+    # Back up containers
     if containers:
-        # Get all containers including stopped ones
         all_containers_raw = run_command("docker ps -a --format '{{.Names}}'")
         all_containers = all_containers_raw.splitlines() if all_containers_raw else []
-        print(f"Found {len(all_containers)} Docker containers on the system (including stopped)")
         
-        # Debug output all container names
-        print(f"Available containers: {', '.join(all_containers)}")
+        if backup_all:
+            containers_to_backup = all_containers
+        else:
+            # Extract container names from compose file if provided
+            if compose_file and os.path.exists(compose_file):
+                with open(compose_file, 'r') as f:
+                    compose_data = yaml.safe_load(f)
+                    services = compose_data.get('services', {})
+                    containers_to_backup = [svc.get('container_name') for svc in services.values() if svc.get('container_name')]
+            else:
+                containers_to_backup = []
         
-        for container in containers:
-            print(f"Looking for container: {container}")
-            matched = False
-            
-            # Create patterns to match, including with "-1" suffix
-            patterns = [
-                container,                    # exact match
-                f"{container}-1",             # with -1 suffix (common Docker Compose pattern)
-                f"{project_dir}_{container}", # project_container 
-                f"{project_dir}_{container}-1", # project_container-1
-                f"{project_dir}-{container}", # project-container
-                f"{project_dir}-{container}-1" # project-container-1
-            ]
-            
-            # Try each pattern
-            for pattern in patterns:
-                if pattern in all_containers:
-                    print(f"Found container: {pattern}")
-                    try:
-                        container_file = os.path.join(containers_dir, pattern + '.json')
-                        config = run_command(f"docker inspect {pattern}")
-                        
-                        if config:
-                            with open(container_file, 'w') as f:
-                                f.write(config)
-                            print(f"Successfully backed up container: {pattern}")
-                            matched = True
-                            break
-                    except Exception as e:
-                        print(f"Error backing up container {pattern}: {e}")
-            
-            # If still not found, try partial matching (looking for containers that end with our name + suffix)
-            if not matched:
-                for actual_container in all_containers:
-                    # Check for names that end with our container name + numeric suffix
-                    if (actual_container.endswith(f"-{container}-1") or 
-                        actual_container.endswith(f"_{container}-1") or
-                        actual_container.endswith(f"-{container}")):
-                        
-                        print(f"Found container with suffix: {actual_container}")
-                        try:
-                            container_file = os.path.join(containers_dir, actual_container + '.json')
-                            config = run_command(f"docker inspect {actual_container}")
-                            
-                            if config:
-                                with open(container_file, 'w') as f:
-                                    f.write(config)
-                                print(f"Successfully backed up container: {actual_container}")
-                                matched = True
-                                break
-                        except Exception as e:
-                            print(f"Error backing up container {actual_container}: {e}")
-                
-            if not matched:
-                print(f"Container {container} not found with any naming pattern")
-                
-    # Network and volume backup code would follow here...
+        if containers_to_backup:
+            print(f"Backing up {len(containers_to_backup)} containers: {', '.join(containers_to_backup)}")
+            backed_up_containers = backup_containers(backup_dir, containers_to_backup)
+            extracted_data['containers'] = backed_up_containers
+        else:
+            print("No containers specified to back up")
     
+    # Back up networks
+    if networks:
+        if backup_all:
+            all_networks = run_command("docker network ls --format '{{.Name}}'").splitlines()
+            networks_to_backup = all_networks
+        else:
+            networks_to_backup = extracted_data.get('networks', [])
+        backed_up_networks = backup_networks(backup_dir, networks_to_backup)
+    
+    # ADD THIS SECTION: Back up volumes with proper logging
+    if volumes:
+        if backup_all:
+            volumes_to_backup = run_command("docker volume ls -q").splitlines()
+        else:
+            # Extract volume names from compose file if provided
+            if compose_file and os.path.exists(compose_file):
+                with open(compose_file, 'r') as f:
+                    compose_data = yaml.safe_load(f)
+                    # Extract both named volumes and those in services
+                    volumes_to_backup = []
+                    
+                    # Get named volumes from 'volumes' section
+                    if 'volumes' in compose_data:
+                        volumes_to_backup.extend(list(compose_data['volumes'].keys()))
+                    
+                    # Also check for volumes defined in services
+                    for service_name, service in compose_data.get('services', {}).items():
+                        if 'volumes' in service:
+                            for vol in service['volumes']:
+                                if isinstance(vol, str) and ':' in vol:
+                                    vol_name = vol.split(':', 1)[0]
+                                    # Only include named volumes (not paths)
+                                    if not vol_name.startswith('.') and not vol_name.startswith('/'):
+                                        volumes_to_backup.append(vol_name)
+
+                extracted_data['volumes'] = volumes_to_backup
+            else:
+                volumes_to_backup = []
+    
+        if volumes_to_backup:
+            print(f"\nBacking up {len(volumes_to_backup)} volumes: {', '.join(volumes_to_backup)}")
+            backed_up_volumes = backup_volumes(backup_dir, volumes_to_backup)
+            extracted_data['volumes'] = backed_up_volumes
+        else:
+            print("\nNo volumes specified to back up")
+    
+    # Optionally pull latest images
+    if pull_images and images:
+        for image in images_to_backup:
+            print(f"Pulling latest image: {image}")
+            run_command(f"docker pull {image}")
+    
+    print("Docker data backup completed")
     return backup_dir
 
 
@@ -895,36 +816,202 @@ if __name__ == "__main__":
 
 def backup_containers(backup_dir, containers_to_backup=None):
     """Backup Docker containers"""
-    os.makedirs(os.path.join(backup_dir, 'containers'), exist_ok=True)
+    containers_dir = os.path.join(backup_dir, 'containers')
+    os.makedirs(containers_dir, exist_ok=True)
     
     # Get list of all containers
-    all_containers = run_command("docker ps -a --format '{{.Names}}'").splitlines()
+    all_containers_raw = run_command("docker ps -a --format '{{.Names}}'")
+    all_containers = all_containers_raw.splitlines() if all_containers_raw else []
+    
+    print(f"Found {len(all_containers)} Docker containers on the system (including stopped)")
+    print(f"Available containers: {', '.join(all_containers)}")
     
     # If no specific containers are specified, back up all
     if not containers_to_backup:
         containers_to_backup = all_containers
         print(f"Backing up all {len(all_containers)} containers")
     
+    backed_up_containers = []
     for container in containers_to_backup:
         print(f"Looking for container: {container}")
+        
+        # Check if container exists
         if container in all_containers:
             print(f"Found container: {container}")
-            # Rest of your backup code...
+            
+            # Export container configuration
+            container_config_file = os.path.join(containers_dir, f"{container}.json")
+            try:
+                container_config = run_command(f"docker inspect {container}")
+                if container_config:
+                    with open(container_config_file, 'w') as f:
+                        f.write(container_config)
+                    
+                    # Make a commit of the container to save its state
+                    container_image = f"{container}_backup_image"
+                    run_command(f"docker commit {container} {container_image}")
+                    
+                    # Save the committed image
+                    image_file = os.path.join(containers_dir, f"{container}.tar")
+                    run_command(f"docker save -o {image_file} {container_image}")
+                    
+                    # Remove the temporary image
+                    run_command(f"docker rmi {container_image}")
+                    
+                    backed_up_containers.append(container)
+                    print(f"Successfully backed up container: {container}")
+            except Exception as e:
+                print(f"Error backing up container {container}: {e}")
         else:
             print(f"Container {container} not found with any naming pattern")
+    
+    print(f"Successfully backed up {len(backed_up_containers)} of {len(containers_to_backup)} containers")
+    return backed_up_containers
 
-def backup_volumes(backup_dir):
+
+def backup_volumes(backup_dir, volumes_to_backup=None):
     """Backup Docker volumes"""
-    print("Starting Docker volume backup...")
-    os.makedirs(os.path.join(backup_dir, 'volumes'), exist_ok=True)
+    volumes_dir = os.path.join(backup_dir, 'volumes')
+    os.makedirs(volumes_dir, exist_ok=True)
     
-    # Get list of volumes
-    volumes = run_command("docker volume ls -q").splitlines()
-    print(f"Found {len(volumes)} volumes to backup")
+    # Get list of all volumes
+    all_volumes_raw = run_command("docker volume ls --format '{{.Name}}'")
+    available_volumes = all_volumes_raw.splitlines() if all_volumes_raw else []
     
-    for volume in volumes:
-        print(f"Backing up volume: {volume}")
-        # Your volume backup code...
-        print(f"Successfully backed up volume: {volume}")
+    # If no specific volumes are specified, back up all
+    if not volumes_to_backup:
+        volumes_to_backup = available_volumes
+        print(f"Backing up all {len(available_volumes)} volumes")
     
-    print("Volume backup complete")
+    backed_up_volumes = []
+    for volume in volumes_to_backup:
+        print(f"Looking for volume: {volume}")
+        
+        # Check if volume exists
+        if volume in available_volumes:
+            print(f"Found volume: {volume}")
+            
+            # Create a metadata file for the volume
+            volume_metadata_file = os.path.join(volumes_dir, f"{volume}.json")
+            try:
+                volume_metadata = run_command(f"docker volume inspect {volume}")
+                if volume_metadata:
+                    with open(volume_metadata_file, 'w') as f:
+                        f.write(volume_metadata)
+                    
+                    # Create a tarball of the volume data
+                    volume_data_dir = os.path.join(volumes_dir, volume)
+                    os.makedirs(volume_data_dir, exist_ok=True)
+                    
+                    # Use a temporary container to copy the volume data
+                    temp_container = f"volume_backup_{volume.replace('-', '_')}"
+                    run_command(f"docker run --rm --name {temp_container} -v {volume}:/source -v {volume_data_dir}:/target alpine sh -c 'cd /source && tar -cf - . | tar -xf - -C /target'")
+                    
+                    backed_up_volumes.append(volume)
+                    print(f"Successfully backed up volume: {volume}")
+                else:
+                    print(f"Error: No metadata found for volume {volume}")
+            except Exception as e:
+                print(f"Error backing up volume {volume}: {e}")
+        else:
+            print(f"Volume {volume} not found")
+    
+    print(f"Successfully backed up {len(backed_up_volumes)} of {len(volumes_to_backup)} volumes")
+    return backed_up_volumes
+
+
+def backup_images(backup_dir, images_to_backup=None):
+    """Backup Docker images"""
+    images_dir = os.path.join(backup_dir, 'images')
+    os.makedirs(images_dir, exist_ok=True)
+    
+    # Get list of all images
+    all_images_raw = run_command("docker images --format '{{.Repository}}:{{.Tag}}'")
+    available_images = [img for img in all_images_raw.splitlines() if img != "<none>:<none>"]
+    
+    # If no specific images are specified, back up all
+    if not images_to_backup:
+        images_to_backup = available_images
+        print(f"Backing up all {len(available_images)} images")
+    
+    print(f"Attempting to back up {len(images_to_backup)} images from compose file")
+    backed_up_images = []
+    
+    for image in images_to_backup:
+        print(f"Looking for image: {image}")
+        
+        # Check if image exists
+        if image in available_images:
+            print(f"Found exact match: {image}")
+            
+            # Save the image
+            image_file = os.path.join(images_dir, f"{image.replace(':', '_').replace('/', '_')}.tar")
+            try:
+                run_command(f"docker save -o {image_file} {image}")
+                backed_up_images.append(image)
+                print(f"Successfully backed up image: {image}")
+            except Exception as e:
+                print(f"Error backing up image {image}: {e}")
+        else:
+            # Try to find a similar image
+            print(f"Warning: Image {image} not found on the system")
+            print(f"  Possible matches: {', '.join(available_images[:5])}")
+            if available_images:
+                print(f"  Trying first match: {available_images[0]}")
+                
+                # Save the first available image as a fallback
+                image_file = os.path.join(images_dir, f"{available_images[0].replace(':', '_').replace('/', '_')}.tar")
+                try:
+                    run_command(f"docker save -o {image_file} {available_images[0]}")
+                    backed_up_images.append(available_images[0])
+                    print(f"  Successfully backed up {available_images[0]} as a fallback")
+                except Exception as e:
+                    print(f"  Error backing up fallback image {available_images[0]}: {e}")
+    
+    print(f"Successfully backed up {len(backed_up_images)} of {len(images_to_backup)} images")
+    return backed_up_images
+
+
+def backup_networks(backup_dir, networks_to_backup=None):
+    """Backup Docker networks"""
+    networks_dir = os.path.join(backup_dir, 'networks')
+    os.makedirs(networks_dir, exist_ok=True)
+    
+    # Get list of all networks
+    all_networks_raw = run_command("docker network ls --format '{{.Name}}'")
+    available_networks = all_networks_raw.splitlines() if all_networks_raw else []
+    
+    print(f"\nFound {len(available_networks)} Docker networks on the system")
+    
+    # If no specific networks are specified, back up all
+    if not networks_to_backup:
+        networks_to_backup = available_networks
+        print(f"Backing up all {len(available_networks)} networks")
+    else:
+        print(f"Backing up {len(networks_to_backup)} specified networks: {', '.join(networks_to_backup)}")
+    
+    backed_up_networks = []
+    for network in networks_to_backup:
+        print(f"Looking for network: {network}")
+        
+        # Check if network exists
+        if network in available_networks:
+            print(f"Found network: {network}")
+            
+            # Export network configuration
+            network_config_file = os.path.join(networks_dir, f"{network}.json")
+            try:
+                network_config = run_command(f"docker network inspect {network}")
+                if network_config:
+                    with open(network_config_file, 'w') as f:
+                        f.write(network_config)
+                    
+                    backed_up_networks.append(network)
+                    print(f"Successfully backed up network: {network}")
+            except Exception as e:
+                print(f"Error backing up network {network}: {e}")
+        else:
+            print(f"Network {network} not found")
+    
+    print(f"Successfully backed up {len(backed_up_networks)} of {len(networks_to_backup)} networks\n")
+    return backed_up_networks
