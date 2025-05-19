@@ -11,7 +11,7 @@ import glob
 import docker  # Add this import
 
 
-def run_command(cmd, capture_output=True, use_sudo=True):
+def run_command(cmd, capture_output=True, use_sudo=False):
     """Run a shell command and return the output"""
     try:
         # Add sudo if required for any command when use_sudo is True
@@ -19,16 +19,18 @@ def run_command(cmd, capture_output=True, use_sudo=True):
             # Don't add sudo if it's already there
             if not cmd.strip().startswith("sudo "):
                 cmd = f"sudo {cmd}"
-            
+        
+        print(f"Executing: {cmd}")
         result = subprocess.run(cmd, shell=True, check=True, 
                               text=True, capture_output=capture_output)
         return result.stdout.strip() if capture_output else True
     except subprocess.CalledProcessError as e:
         print(f"Error running command: {cmd}")
-        print(f"Error: {e}")
+        print(f"Return code: {e.returncode}")
         if capture_output and hasattr(e, 'stderr'):
-            print(f"STDERR: {e.stderr}")
-        return None
+            print(f"Error output: {e.stderr}")
+        # Return empty string for silent failure handling
+        return "" if capture_output else False
 
 
 def backup_docker_data(backup_dir, images=True, containers=True, networks=True, volumes=True, 
@@ -95,50 +97,84 @@ def backup_docker_data(backup_dir, images=True, containers=True, networks=True, 
     
     # Back up networks
     if networks:
+        print("\n=== Starting Docker network backup ===")
         if backup_all:
             all_networks = run_command("docker network ls --format '{{.Name}}'").splitlines()
             networks_to_backup = all_networks
         else:
-            networks_to_backup = extracted_data.get('networks', [])
+            # Extract network names from compose file if provided
+            networks_to_backup = []
+            if compose_file and os.path.exists(compose_file):
+                with open(compose_file, 'r') as f:
+                    compose_data = yaml.safe_load(f)
+                    
+                    # Get named networks from 'networks' section
+                    if 'networks' in compose_data:
+                        networks_to_backup.extend(compose_data['networks'].keys())
+                    
+                    # Get networks used in services
+                    services = compose_data.get('services', {})
+                    for service in services.values():
+                        if 'networks' in service:
+                            service_networks = service['networks']
+                            if isinstance(service_networks, list):
+                                networks_to_backup.extend(service_networks)
+                            elif isinstance(service_networks, dict):
+                                networks_to_backup.extend(service_networks.keys())
+    
+    # Remove duplicates while preserving order
+    networks_to_backup = list(dict.fromkeys(networks_to_backup))
+    
+    if networks_to_backup:
+        print(f"Backing up {len(networks_to_backup)} networks: {', '.join(networks_to_backup)}")
         backed_up_networks = backup_networks(backup_dir, networks_to_backup)
+        extracted_data['networks'] = backed_up_networks
+    else:
+        print("No networks specified to back up")
     
     # ADD THIS SECTION: Back up volumes with proper logging
     if volumes:
-        print("\nProcessing volume backup...")
+        print("\n=== Starting Docker volume backup ===")
         if backup_all:
             volumes_to_backup = run_command("docker volume ls -q").splitlines()
         else:
             # Extract volume names from compose file if provided
             volumes_to_backup = []
             if compose_file and os.path.exists(compose_file):
-                with open(compose_file, 'r') as f:
-                    compose_data = yaml.safe_load(f)
-                    
-                    # Get named volumes from 'volumes' section
-                    if 'volumes' in compose_data:
-                        volumes_to_backup.extend(compose_data['volumes'].keys())
-                    
-                    # Get volumes used in services
-                    services = compose_data.get('services', {})
-                    for service in services.values():
-                        if 'volumes' in service:
-                            for vol in service['volumes']:
-                                # Handle different volume syntaxes
-                                if isinstance(vol, str) and ':' in vol:
-                                    vol_parts = vol.split(':', 1)
-                                    # Only add named volumes (not bind mounts)
-                                    if not vol_parts[0].startswith('./') and not vol_parts[0].startswith('/'):
-                                        volumes_to_backup.append(vol_parts[0])
+                try:
+                    with open(compose_file, 'r') as f:
+                        compose_data = yaml.safe_load(f)
+                        
+                        # Get named volumes from 'volumes' section
+                        if 'volumes' in compose_data:
+                            print(f"Found {len(compose_data['volumes'])} named volumes in docker-compose.yml")
+                            volumes_to_backup.extend(compose_data['volumes'].keys())
+                        
+                        # Get volumes used in services
+                        services = compose_data.get('services', {})
+                        for service_name, service in services.items():
+                            if 'volumes' in service:
+                                print(f"Found volumes in service '{service_name}'")
+                                for vol in service['volumes']:
+                                    # Handle different volume syntaxes
+                                    if isinstance(vol, str) and ':' in vol:
+                                        vol_parts = vol.split(':', 1)
+                                        # Only add named volumes (not bind mounts)
+                                        if not vol_parts[0].startswith('./') and not vol_parts[0].startswith('/'):
+                                            volumes_to_backup.append(vol_parts[0])
+                                            print(f"  - Added volume: {vol_parts[0]}")
+                except Exception as e:
+                    print(f"Error extracting volumes from compose file: {e}")
         
         # Remove duplicates while preserving order
         volumes_to_backup = list(dict.fromkeys(volumes_to_backup))
         
         if volumes_to_backup:
-            print(f"\nBacking up {len(volumes_to_backup)} volumes: {', '.join(volumes_to_backup)}")
+            print(f"Backing up {len(volumes_to_backup)} volumes: {', '.join(volumes_to_backup)}")
             backed_up_volumes = backup_volumes(backup_dir, volumes_to_backup)
             extracted_data['volumes'] = backed_up_volumes
         else:
-            print("\nNo volumes specified to back up")
+            print("No volumes specified to back up")
     
     # Optionally pull latest images
     if pull_images and images:
@@ -937,12 +973,16 @@ def backup_volumes(backup_dir, volumes_to_backup=None):
                 container_name = f"volume_backup_{volume.replace('-', '_')}_{timestamp}"
                 
                 # Check if Alpine is available, otherwise use busybox
-                alpine_exists = run_command("docker image ls -q alpine:latest")
-                if alpine_exists:
+                alpine_available = ensure_image_available("alpine:latest")
+                if alpine_available:
                     base_image = "alpine:latest"
                 else:
-                    base_image = "busybox:latest"
-                    
+                    busybox_available = ensure_image_available("busybox:latest")
+                    if busybox_available:
+                        base_image = "busybox:latest"
+                    else:
+                        raise Exception("Neither alpine nor busybox images are available")
+                
                 print(f"Creating temporary container using {base_image}...")
                 run_command(f"docker run -d --name {container_name} -v {volume}:/volume {base_image} sleep 600")
                 
@@ -1065,3 +1105,13 @@ def backup_networks(backup_dir, networks_to_backup=None):
     
     print(f"Successfully backed up {len(backed_up_networks)} of {len(networks_to_backup)} networks\n")
     return backed_up_networks
+
+
+def ensure_image_available(image_name):
+    """Make sure an image is available, pulling it if needed"""
+    check_cmd = f"docker image ls -q {image_name}"
+    if not run_command(check_cmd):
+        print(f"Image {image_name} not found, pulling...")
+        pull_cmd = f"docker pull {image_name}"
+        return run_command(pull_cmd, capture_output=False)
+    return True
