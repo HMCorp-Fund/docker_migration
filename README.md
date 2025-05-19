@@ -53,6 +53,27 @@ pip install docker-migration
 
 This will install the tool and all its dependencies. After installation, you can use the `docker-migration` command from anywhere.
 
+### Using a virtual environment (recommended)
+
+For a clean installation isolated from system packages:
+
+```bash
+# Install virtualenv if needed
+sudo apt-get update
+sudo apt-get install -y python3-venv
+
+# Create and activate a virtual environment
+cd ~
+python3 -m venv docker_migration_env
+source docker_migration_env/bin/activate
+
+# Install in the virtual environment
+pip install docker-migration
+
+# Test the command
+docker-migration --help
+```
+
 ### From Source
 
 Install the package:
