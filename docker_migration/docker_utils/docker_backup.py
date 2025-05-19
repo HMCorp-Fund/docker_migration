@@ -954,6 +954,7 @@ def backup_volumes(backup_dir, volumes_to_backup=None):
     available_volumes = all_volumes_raw.splitlines() if all_volumes_raw else []
     
     print(f"Found {len(available_volumes)} Docker volumes on the system")
+    print(f"Available volumes: {', '.join(available_volumes[:10])}{'...' if len(available_volumes) > 10 else ''}")
     
     # If no specific volumes are specified, back up all
     if not volumes_to_backup:
@@ -963,38 +964,54 @@ def backup_volumes(backup_dir, volumes_to_backup=None):
         print(f"Backing up {len(volumes_to_backup)} specified volumes: {', '.join(volumes_to_backup)}")
     
     backed_up_volumes = []
+    
+    # Determine possible project name prefixes from directory name
+    current_dir = os.path.basename(os.getcwd())
+    possible_prefixes = [f"{current_dir}_", ""]
+    
     for volume in volumes_to_backup:
         print(f"Processing volume: {volume}")
         
-        # Skip if volume doesn't exist
-        if volume not in available_volumes:
-            print(f"Volume {volume} not found - skipping")
-            continue
+        # Try different prefixing patterns
+        volume_found = False
+        tried_names = []
+        
+        for prefix in possible_prefixes:
+            prefixed_volume = f"{prefix}{volume}"
+            tried_names.append(prefixed_volume)
             
-        try:
-            # Create a temporary container to access the volume
-            timestamp = int(time.time())
-            container_name = f"volume_backup_{volume.replace('-', '_')}_{timestamp}"
-            
-            run_command(f"docker run -d --name {container_name} -v {volume}:/volume alpine:latest sleep 60")
-            
-            # Create archive of the volume data
-            volume_archive = os.path.join(volumes_dir, f"{volume.replace('/', '_')}.tar")
-            print(f"Creating archive for volume {volume}...")
-            
-            # Create tar archive inside the container
-            run_command(f"docker exec {container_name} tar -cf /tmp/volume.tar -C /volume .")
-            
-            # Copy the archive from the container
-            run_command(f"docker cp {container_name}:/tmp/volume.tar {volume_archive}")
-            
-            # Clean up the temporary container
-            run_command(f"docker rm -f {container_name}")
-            
-            backed_up_volumes.append(volume)
-            print(f"Successfully backed up volume: {volume}")
-        except Exception as e:
-            print(f"Error backing up volume {volume}: {e}")
+            if prefixed_volume in available_volumes:
+                print(f"Found volume as: {prefixed_volume}")
+                volume_found = True
+                
+                try:
+                    # Create a temporary container to access the volume
+                    timestamp = int(time.time())
+                    container_name = f"volume_backup_{volume.replace('-', '_')}_{timestamp}"
+                    
+                    run_command(f"docker run -d --name {container_name} -v {prefixed_volume}:/volume alpine:latest sleep 120")
+                    
+                    # Create archive of the volume data
+                    volume_archive = os.path.join(volumes_dir, f"{volume.replace('/', '_')}.tar")
+                    print(f"Creating archive for volume {prefixed_volume}...")
+                    
+                    # Create tar archive inside the container
+                    run_command(f"docker exec {container_name} tar -cf /tmp/volume.tar -C /volume .")
+                    
+                    # Copy the archive from the container
+                    run_command(f"docker cp {container_name}:/tmp/volume.tar {volume_archive}")
+                    
+                    # Clean up the temporary container
+                    run_command(f"docker rm -f {container_name}")
+                    
+                    backed_up_volumes.append(volume)
+                    print(f"✓ Successfully backed up volume: {prefixed_volume}")
+                    break  # Break the prefix loop once successful
+                except Exception as e:
+                    print(f"Error backing up volume {prefixed_volume}: {str(e)}")
+        
+        if not volume_found:
+            print(f"Volume {volume} not found with any prefix. Tried: {', '.join(tried_names)}")
     
     print(f"=== Volume backup complete: {len(backed_up_volumes)} of {len(volumes_to_backup)} volumes backed up ===\n")
     return backed_up_volumes

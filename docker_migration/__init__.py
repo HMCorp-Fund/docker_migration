@@ -4,7 +4,7 @@ Docker migration module.
 This package provides functionality for migrating Docker containers and images.
 """
 
-__version__ = '0.1.8'
+__version__ = '0.1.9'
 __author__ = 'Anton Pavlenko'
 
 # Import and expose key components that should be available when importing the package
